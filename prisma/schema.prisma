@@ -1,0 +1,391 @@
+// Prisma schema for Mini-App Backend
+// Includes: Apps, Users, Wallet/Ledger, Orders, Listings, Notifications
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// =============================================================================
+// ADMIN & AUTHENTICATION
+// =============================================================================
+
+model Admin {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  name         String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Relations
+  reviewedApplications SellerApplication[] @relation("ReviewedBy")
+  reviewedListings     Listing[]           @relation("ReviewedBy")
+
+  @@map("admins")
+}
+
+// =============================================================================
+// APPS & MODULES
+// =============================================================================
+
+enum AppType {
+  feed
+  module
+  home
+}
+
+model App {
+  id          String   @id @default(uuid())
+  name        String
+  icon        String?  // URL or icon name
+  description String?
+  type        AppType
+  order       Int      @default(0)
+  enabled     Boolean  @default(true)
+  config      Json     // Type-specific configuration
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("apps")
+}
+
+// =============================================================================
+// USERS & SELLERS
+// =============================================================================
+
+enum SellerStatus {
+  none
+  pending
+  approved
+  rejected
+  suspended
+}
+
+model User {
+  id            String       @id @default(uuid())
+  did           String       @unique // Bluesky DID
+  handle        String?      // Bluesky handle (cached)
+  displayName   String?
+  avatar        String?
+  walletBalance Decimal      @default(0) @db.Decimal(12, 2)
+  heldBalance   Decimal      @default(0) @db.Decimal(12, 2) // Escrow holds
+  isSeller      Boolean      @default(false)
+  sellerStatus  SellerStatus @default(none)
+  rating        Decimal?     @db.Decimal(2, 1) // 0.0 - 5.0
+  ratingCount   Int          @default(0)
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  // Relations
+  sellerApplication SellerApplication?
+  listings          Listing[]
+  ordersAsBuyer     Order[]            @relation("Buyer")
+  ordersAsSeller    Order[]            @relation("Seller")
+  transactions      Transaction[]
+  notifications     Notification[]
+  driverProfile     DriverProfile?
+
+  @@map("users")
+}
+
+model SellerApplication {
+  id           String       @id @default(uuid())
+  userId       String       @unique
+  businessName String?
+  businessType String? // individual, company
+  description  String?
+  documents    Json? // Array of document URLs
+  status       SellerStatus @default(pending)
+  reviewedById String?
+  reviewedAt   DateTime?
+  reviewNotes  String?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  // Relations
+  user       User   @relation(fields: [userId], references: [id])
+  reviewedBy Admin? @relation("ReviewedBy", fields: [reviewedById], references: [id])
+
+  @@map("seller_applications")
+}
+
+// Driver profile for taxi/delivery services
+model DriverProfile {
+  id            String   @id @default(uuid())
+  userId        String   @unique
+  vehicleType   String? // car, motorcycle, bicycle
+  vehiclePlate  String?
+  isOnline      Boolean  @default(false)
+  currentLat    Decimal? @db.Decimal(10, 8)
+  currentLng    Decimal? @db.Decimal(11, 8)
+  lastLocationAt DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relations
+  user   User    @relation(fields: [userId], references: [id])
+  orders Order[] @relation("Driver")
+
+  @@map("driver_profiles")
+}
+
+// =============================================================================
+// LISTINGS
+// =============================================================================
+
+enum ListingType {
+  product
+  experience
+  room
+  service
+  taxi
+  delivery
+}
+
+enum ListingStatus {
+  draft
+  pending // Awaiting admin approval
+  approved
+  live
+  paused
+  rejected
+  deleted
+}
+
+model Listing {
+  id           String        @id @default(uuid())
+  userId       String
+  type         ListingType
+  title        String
+  description  String?
+  price        Decimal       @db.Decimal(12, 2)
+  currency     String        @default("USD")
+  postUri      String?       // Bluesky post URI if linked
+  images       Json?         // Array of image URLs
+  metadata     Json?         // Type-specific data (location, dates, etc.)
+  status       ListingStatus @default(draft)
+  reviewedById String?
+  reviewedAt   DateTime?
+  reviewNotes  String?
+  viewCount    Int           @default(0)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  // Relations
+  user       User    @relation(fields: [userId], references: [id])
+  reviewedBy Admin?  @relation("ReviewedBy", fields: [reviewedById], references: [id])
+  orders     Order[]
+
+  @@index([type, status])
+  @@index([userId])
+  @@map("listings")
+}
+
+// =============================================================================
+// ORDERS & TRANSACTIONS
+// =============================================================================
+
+enum OrderStatus {
+  created // Order created, awaiting payment
+  paid // Funds held in escrow
+  accepted // Seller accepted
+  in_progress
+  shipped // For products
+  delivered
+  completed // Funds released
+  cancelled
+  refunded
+  disputed
+  resolved_buyer
+  resolved_seller
+}
+
+model Order {
+  id                 String      @id @default(uuid())
+  orderNumber        String      @unique @default(uuid()) // Human-readable
+  listingId          String
+  buyerId            String
+  sellerId           String
+  driverId           String?     // For taxi/delivery
+  quantity           Int         @default(1)
+  unitPrice          Decimal     @db.Decimal(12, 2)
+  totalAmount        Decimal     @db.Decimal(12, 2)
+  platformFeePercent Decimal     @db.Decimal(4, 2)
+  platformFeeAmount  Decimal     @db.Decimal(12, 2)
+  sellerAmount       Decimal     @db.Decimal(12, 2) // totalAmount - platformFeeAmount
+  escrowAmount       Decimal     @db.Decimal(12, 2) @default(0)
+  status             OrderStatus @default(created)
+  metadata           Json?       // Delivery address, notes, etc.
+  
+  // Timestamps
+  paidAt             DateTime?
+  acceptedAt         DateTime?
+  shippedAt          DateTime?
+  deliveredAt        DateTime?
+  completedAt        DateTime?
+  cancelledAt        DateTime?
+  disputedAt         DateTime?
+  resolvedAt         DateTime?
+  
+  createdAt          DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
+
+  // Relations
+  listing      Listing       @relation(fields: [listingId], references: [id])
+  buyer        User          @relation("Buyer", fields: [buyerId], references: [id])
+  seller       User          @relation("Seller", fields: [sellerId], references: [id])
+  driver       DriverProfile? @relation("Driver", fields: [driverId], references: [id])
+  transactions Transaction[]
+  dispute      Dispute?
+
+  @@index([buyerId, status])
+  @@index([sellerId, status])
+  @@index([status])
+  @@map("orders")
+}
+
+enum TransactionType {
+  deposit // User adds funds
+  withdrawal // User withdraws funds
+  hold // Escrow hold for order
+  release // Release to seller
+  commission // Platform fee
+  refund // Return to buyer
+  adjustment // Manual adjustment by admin
+}
+
+enum TransactionStatus {
+  pending
+  completed
+  failed
+  reversed
+}
+
+model Transaction {
+  id            String            @id @default(uuid())
+  userId        String
+  orderId       String?
+  type          TransactionType
+  amount        Decimal           @db.Decimal(12, 2)
+  balanceBefore Decimal           @db.Decimal(12, 2)
+  balanceAfter  Decimal           @db.Decimal(12, 2)
+  status        TransactionStatus @default(completed)
+  description   String?
+  reference     String?           // External reference (payment gateway, etc.)
+  metadata      Json?
+  createdAt     DateTime          @default(now())
+
+  // Relations
+  user  User   @relation(fields: [userId], references: [id])
+  order Order? @relation(fields: [orderId], references: [id])
+
+  @@index([userId, createdAt])
+  @@index([orderId])
+  @@map("transactions")
+}
+
+// =============================================================================
+// DISPUTES
+// =============================================================================
+
+enum DisputeStatus {
+  open
+  under_review
+  resolved_buyer
+  resolved_seller
+  closed
+}
+
+model Dispute {
+  id          String        @id @default(uuid())
+  orderId     String        @unique
+  openedById  String        // User who opened dispute
+  reason      String
+  description String?
+  evidence    Json?         // Array of image/document URLs
+  status      DisputeStatus @default(open)
+  resolution  String?
+  resolvedAt  DateTime?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  // Relations
+  order Order @relation(fields: [orderId], references: [id])
+
+  @@map("disputes")
+}
+
+// =============================================================================
+// NOTIFICATIONS
+// =============================================================================
+
+enum NotificationType {
+  // Order notifications
+  order_created
+  order_paid
+  order_accepted
+  order_rejected
+  order_shipped
+  order_delivered
+  order_completed
+  order_cancelled
+  order_refunded
+  
+  // Dispute notifications
+  dispute_opened
+  dispute_resolved
+  
+  // Seller notifications
+  seller_application_approved
+  seller_application_rejected
+  listing_approved
+  listing_rejected
+  
+  // Wallet notifications
+  wallet_deposit
+  wallet_withdrawal
+  payment_received
+  
+  // Real-time notifications
+  driver_assigned
+  driver_arriving
+  driver_location_update
+  
+  // System
+  system_message
+}
+
+model Notification {
+  id        String           @id @default(uuid())
+  userId    String
+  type      NotificationType
+  title     String
+  message   String?
+  data      Json?            // Additional data (orderId, listingId, etc.)
+  read      Boolean          @default(false)
+  createdAt DateTime         @default(now())
+
+  // Relations
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId, read, createdAt])
+  @@map("notifications")
+}
+
+// =============================================================================
+// APP CONFIG CACHE
+// =============================================================================
+
+model ConfigCache {
+  key       String   @id
+  value     Json
+  version   Int      @default(1)
+  updatedAt DateTime @updatedAt
+
+  @@map("config_cache")
+}

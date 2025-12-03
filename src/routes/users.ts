@@ -1,0 +1,242 @@
+import { Router, Request, Response } from 'express';
+import { z } from 'zod';
+import { prisma } from '../lib/prisma';
+import { userAuth } from '../middleware/auth';
+import { AppError } from '../middleware/errorHandler';
+
+const router = Router();
+
+// POST /users/sync - Sync/create user from Bluesky DID
+// Called when mobile app authenticates
+router.post('/sync', userAuth, async (req: Request, res: Response) => {
+  const schema = z.object({
+    did: z.string(),
+    handle: z.string(),
+    displayName: z.string().optional(),
+    avatarUrl: z.string().url().optional(),
+  });
+
+  try {
+    const data = schema.parse(req.body);
+
+    // Verify DID matches auth header
+    if (data.did !== req.userDid) {
+      throw new AppError(400, 'DID mismatch');
+    }
+
+    const user = await prisma.user.upsert({
+      where: { did: data.did },
+      update: {
+        handle: data.handle,
+        displayName: data.displayName,
+        avatarUrl: data.avatarUrl,
+        lastSeenAt: new Date(),
+      },
+      create: {
+        did: data.did,
+        handle: data.handle,
+        displayName: data.displayName,
+        avatarUrl: data.avatarUrl,
+        lastSeenAt: new Date(),
+      },
+      select: {
+        id: true,
+        did: true,
+        handle: true,
+        displayName: true,
+        avatarUrl: true,
+        walletBalance: true,
+        walletHeld: true,
+        isSeller: true,
+        sellerRating: true,
+        sellerReviewCount: true,
+        createdAt: true,
+      },
+    });
+
+    return res.json(user);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ error: 'Invalid input', details: error.errors });
+    }
+    throw error;
+  }
+});
+
+// GET /users/me - Get current user profile
+router.get('/me', userAuth, async (req: Request, res: Response) => {
+  const user = await prisma.user.findUnique({
+    where: { id: req.userId },
+    select: {
+      id: true,
+      did: true,
+      handle: true,
+      displayName: true,
+      avatarUrl: true,
+      walletBalance: true,
+      walletHeld: true,
+      isSeller: true,
+      sellerRating: true,
+      sellerReviewCount: true,
+      createdAt: true,
+      _count: {
+        select: {
+          buyerOrders: true,
+          sellerOrders: true,
+          listings: true,
+        },
+      },
+    },
+  });
+
+  if (!user) {
+    throw new AppError(404, 'User not found');
+  }
+
+  return res.json(user);
+});
+
+// GET /users/:did - Get user by DID (public profile)
+router.get('/:did', userAuth, async (req: Request, res: Response) => {
+  const user = await prisma.user.findUnique({
+    where: { did: req.params.did },
+    select: {
+      id: true,
+      did: true,
+      handle: true,
+      displayName: true,
+      avatarUrl: true,
+      isSeller: true,
+      sellerRating: true,
+      sellerReviewCount: true,
+      createdAt: true,
+      // Only show listings if seller
+      listings: {
+        where: { status: 'active' },
+        take: 10,
+        orderBy: { createdAt: 'desc' },
+        select: {
+          id: true,
+          title: true,
+          type: true,
+          price: true,
+          currency: true,
+          images: true,
+        },
+      },
+    },
+  });
+
+  if (!user) {
+    throw new AppError(404, 'User not found');
+  }
+
+  return res.json(user);
+});
+
+// PUT /users/me - Update current user profile
+router.put('/me', userAuth, async (req: Request, res: Response) => {
+  const schema = z.object({
+    displayName: z.string().max(100).optional(),
+    avatarUrl: z.string().url().optional(),
+    // Seller-specific settings
+    sellerBio: z.string().max(500).optional(),
+    sellerLocation: z.object({
+      city: z.string(),
+      country: z.string(),
+    }).optional(),
+  });
+
+  try {
+    const data = schema.parse(req.body);
+
+    const user = await prisma.user.update({
+      where: { id: req.userId },
+      data: {
+        displayName: data.displayName,
+        avatarUrl: data.avatarUrl,
+        metadata: {
+          sellerBio: data.sellerBio,
+          sellerLocation: data.sellerLocation,
+        },
+      },
+      select: {
+        id: true,
+        did: true,
+        handle: true,
+        displayName: true,
+        avatarUrl: true,
+        isSeller: true,
+        metadata: true,
+      },
+    });
+
+    return res.json(user);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ error: 'Invalid input', details: error.errors });
+    }
+    throw error;
+  }
+});
+
+// GET /users/me/activity - Get user's recent activity
+router.get('/me/activity', userAuth, async (req: Request, res: Response) => {
+  const { page = '1', limit = '20' } = req.query;
+
+  const skip = (parseInt(page as string) - 1) * parseInt(limit as string);
+  const take = parseInt(limit as string);
+
+  // Get recent orders (as buyer or seller)
+  const orders = await prisma.order.findMany({
+    where: {
+      OR: [
+        { buyerId: req.userId },
+        { sellerId: req.userId },
+      ],
+    },
+    skip,
+    take,
+    orderBy: { updatedAt: 'desc' },
+    select: {
+      id: true,
+      status: true,
+      amount: true,
+      currency: true,
+      createdAt: true,
+      updatedAt: true,
+      buyer: {
+        select: { handle: true, displayName: true, avatarUrl: true },
+      },
+      seller: {
+        select: { handle: true, displayName: true, avatarUrl: true },
+      },
+      listing: {
+        select: { title: true, images: true },
+      },
+    },
+  });
+
+  // Get recent transactions
+  const transactions = await prisma.transaction.findMany({
+    where: { userId: req.userId },
+    take: 10,
+    orderBy: { createdAt: 'desc' },
+    select: {
+      id: true,
+      type: true,
+      amount: true,
+      currency: true,
+      status: true,
+      description: true,
+      createdAt: true,
+    },
+  });
+
+  return res.json({
+    orders,
+    transactions,
+  });
+});
+
+export default router;
