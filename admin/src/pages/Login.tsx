@@ -9,7 +9,7 @@ interface LoginResponse {
     id: string
     email: string
     name: string
-    role: string
+    role?: string
   }
 }
 
@@ -33,8 +33,8 @@ export default function Login() {
         body: JSON.stringify({ email, password }),
       })
 
-      setAuth(res.token, res.admin)
-      navigate('/')
+      setAuth(res.token, { ...res.admin, role: res.admin.role || 'admin' })
+      navigate('/admin/')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Authentication failed')
     } finally {

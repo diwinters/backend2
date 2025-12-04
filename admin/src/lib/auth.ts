@@ -5,7 +5,7 @@ interface Admin {
   id: string
   email: string
   name: string
-  role: string
+  role?: string
 }
 
 interface AuthState {
@@ -49,7 +49,9 @@ export async function api<T>(
 
   if (res.status === 401) {
     useAuthStore.getState().logout()
-    window.location.href = '/admin/login'
+    if (typeof window !== 'undefined') {
+      window.location.href = '/admin/login'
+    }
     throw new Error('Unauthorized')
   }
 
