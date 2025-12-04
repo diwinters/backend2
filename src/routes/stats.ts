@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
-import { prisma } from '../lib/prisma';
-import { adminAuth } from '../middleware/auth';
+import { prisma } from '../lib/prisma.js';
+import { adminAuth } from '../middleware/auth.js';
 
 const router = Router();
 
@@ -12,7 +12,7 @@ router.get('/', adminAuth, async (_req: Request, res: Response) => {
       // App stats
       totalApps,
       activeApps,
-      // Seller stats
+      // Seller stats (users with isSeller = true)
       totalSellers,
       pendingSellers,
       activeSellers,
@@ -27,32 +27,31 @@ router.get('/', adminAuth, async (_req: Request, res: Response) => {
       disputedOrders,
       // User stats
       totalUsers,
-      activeUsersToday,
       // Transaction stats
       transactions,
       // Recent activity
       recentOrders,
-      recentSellers,
+      recentSellerApplications,
     ] = await Promise.all([
       // Apps
-      prisma.miniApp.count(),
-      prisma.miniApp.count({ where: { enabled: true } }),
+      prisma.app.count(),
+      prisma.app.count({ where: { enabled: true } }),
       
-      // Sellers
-      prisma.seller.count(),
-      prisma.seller.count({ where: { status: 'pending' } }),
-      prisma.seller.count({ where: { status: 'approved' } }),
+      // Sellers (users with isSeller flag)
+      prisma.user.count({ where: { isSeller: true } }),
+      prisma.user.count({ where: { sellerStatus: 'pending' } }),
+      prisma.user.count({ where: { sellerStatus: 'approved', isSeller: true } }),
       
       // Listings
       prisma.listing.count(),
       prisma.listing.count({ where: { status: 'pending' } }),
-      prisma.listing.count({ where: { status: 'active' } }),
+      prisma.listing.count({ where: { status: 'live' } }),
       
       // Orders
       prisma.order.count(),
       prisma.order.count({ 
         where: { 
-          status: { in: ['pending', 'confirmed', 'processing', 'shipped'] } 
+          status: { in: ['created', 'paid', 'accepted', 'in_progress', 'shipped'] } 
         } 
       }),
       prisma.order.count({ where: { status: 'completed' } }),
@@ -60,13 +59,6 @@ router.get('/', adminAuth, async (_req: Request, res: Response) => {
       
       // Users
       prisma.user.count(),
-      prisma.user.count({
-        where: {
-          lastSeen: {
-            gte: new Date(Date.now() - 24 * 60 * 60 * 1000) // Last 24 hours
-          }
-        }
-      }),
       
       // Transactions - sum of completed order amounts
       prisma.order.aggregate({
@@ -80,34 +72,21 @@ router.get('/', adminAuth, async (_req: Request, res: Response) => {
         take: 5,
         orderBy: { createdAt: 'desc' },
         include: {
-          user: { select: { username: true } },
+          buyer: { select: { handle: true, displayName: true } },
           listing: { select: { title: true } },
         }
       }),
       
       // Recent seller applications (last 5)
-      prisma.seller.findMany({
+      prisma.sellerApplication.findMany({
         where: { status: 'pending' },
         take: 5,
         orderBy: { createdAt: 'desc' },
         include: {
-          user: { select: { username: true } }
+          user: { select: { handle: true, displayName: true } }
         }
       }),
     ]);
-
-    // Calculate daily revenue (last 7 days)
-    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-    const dailyRevenue = await prisma.$queryRaw`
-      SELECT 
-        DATE(created_at) as date,
-        SUM(total_amount) as revenue,
-        COUNT(*) as orders
-      FROM orders
-      WHERE status = 'completed' AND created_at >= ${sevenDaysAgo}
-      GROUP BY DATE(created_at)
-      ORDER BY date ASC
-    ` as { date: Date; revenue: number; orders: number }[];
 
     // Calculate completion rate
     const completionRate = totalOrders > 0 
@@ -160,19 +139,30 @@ router.get('/', adminAuth, async (_req: Request, res: Response) => {
         },
         users: {
           total: totalUsers,
-          activeToday: activeUsersToday,
+          activeToday: 0, // Would need session tracking
         },
         revenue: {
           total: transactions._sum.totalAmount || 0,
           transactionCount: transactions._count,
-          daily: dailyRevenue,
+          daily: [],
         },
         metrics: {
           completionRate,
         },
         recent: {
-          orders: recentOrders,
-          sellerApplications: recentSellers,
+          orders: recentOrders.map(o => ({
+            id: o.id,
+            status: o.status,
+            totalAmount: Number(o.totalAmount),
+            createdAt: o.createdAt.toISOString(),
+            user: { username: o.buyer?.handle || 'Unknown' },
+            listing: { title: o.listing?.title || 'Unknown' },
+          })),
+          sellerApplications: recentSellerApplications.map(s => ({
+            id: s.id,
+            createdAt: s.createdAt.toISOString(),
+            user: { username: s.user?.handle || 'Unknown' },
+          })),
         },
         timestamp: new Date().toISOString(),
       }
@@ -190,9 +180,9 @@ router.get('/', adminAuth, async (_req: Request, res: Response) => {
 router.get('/realtime', adminAuth, async (_req: Request, res: Response) => {
   try {
     const [activeOrders, pendingListings, pendingSellers, disputedOrders] = await Promise.all([
-      prisma.order.count({ where: { status: { in: ['pending', 'confirmed', 'processing'] } } }),
+      prisma.order.count({ where: { status: { in: ['created', 'paid', 'accepted', 'in_progress'] } } }),
       prisma.listing.count({ where: { status: 'pending' } }),
-      prisma.seller.count({ where: { status: 'pending' } }),
+      prisma.user.count({ where: { sellerStatus: 'pending' } }),
       prisma.order.count({ where: { status: 'disputed' } }),
     ]);
 
