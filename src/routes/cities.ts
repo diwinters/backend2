@@ -1,10 +1,53 @@
-import { Router, Request, Response } from 'express'
+import { Router, Request, Response, NextFunction } from 'express'
 import { z } from 'zod'
 import { prisma } from '../lib/prisma.js'
-import { adminOnly } from '../middleware/auth.js'
+import { adminOnly, userAuth } from '../middleware/auth.js'
 import { AppError } from '../middleware/errorHandler.js'
+import { config } from '../config/index.js'
 
 const router = Router()
+
+// =============================================================================
+// MIDDLEWARE: Global Admin Check (DID-based)
+// =============================================================================
+
+async function globalAdminAuth(req: Request, res: Response, next: NextFunction) {
+  try {
+    const apiKey = req.headers['x-api-key']
+    const userDid = req.headers['x-user-did'] as string | undefined
+
+    if (apiKey !== config.apiKey) {
+      throw new AppError(401, 'Invalid API key', 'INVALID_API_KEY')
+    }
+
+    if (!userDid) {
+      throw new AppError(401, 'No user DID provided', 'NO_USER_DID')
+    }
+
+    // Check if user is a global admin
+    const adminRecord = await prisma.cityAdmin.findFirst({
+      where: {
+        did: userDid,
+        cityId: null, // Global admin has null cityId
+      },
+    })
+
+    if (!adminRecord) {
+      throw new AppError(403, 'Global admin access required', 'NOT_GLOBAL_ADMIN')
+    }
+
+    // Find or create user
+    let user = await prisma.user.findUnique({ where: { did: userDid } })
+    if (!user) {
+      user = await prisma.user.create({ data: { did: userDid } })
+    }
+
+    req.user = { id: user.id, did: user.did }
+    next()
+  } catch (error) {
+    next(error)
+  }
+}
 
 // =============================================================================
 // VALIDATION SCHEMAS
@@ -196,9 +239,9 @@ router.get('/:idOrSlug', async (req: Request, res: Response) => {
 
 /**
  * POST /cities
- * Create a new city (admin only)
+ * Create a new city (global admin only via DID)
  */
-router.post('/', adminOnly, async (req: Request, res: Response) => {
+router.post('/', globalAdminAuth, async (req: Request, res: Response) => {
   const data = createCitySchema.parse(req.body)
 
   // Check slug uniqueness
@@ -228,9 +271,9 @@ router.post('/', adminOnly, async (req: Request, res: Response) => {
 
 /**
  * PUT /cities/:id
- * Update a city (admin only)
+ * Update a city (global admin only via DID)
  */
-router.put('/:id', adminOnly, async (req: Request, res: Response) => {
+router.put('/:id', globalAdminAuth, async (req: Request, res: Response) => {
   const { id } = req.params
   const data = updateCitySchema.parse(req.body)
 
@@ -258,9 +301,9 @@ router.put('/:id', adminOnly, async (req: Request, res: Response) => {
 
 /**
  * DELETE /cities/:id
- * Delete a city (admin only)
+ * Delete a city (global admin only via DID)
  */
-router.delete('/:id', adminOnly, async (req: Request, res: Response) => {
+router.delete('/:id', globalAdminAuth, async (req: Request, res: Response) => {
   const { id } = req.params
 
   const city = await prisma.city.findUnique({
@@ -294,7 +337,7 @@ router.delete('/:id', adminOnly, async (req: Request, res: Response) => {
  * GET /cities/:id/admins
  * List admins for a city
  */
-router.get('/:id/admins', adminOnly, async (req: Request, res: Response) => {
+router.get('/:id/admins', globalAdminAuth, async (req: Request, res: Response) => {
   const { id } = req.params
 
   const admins = await prisma.cityAdmin.findMany({
@@ -309,7 +352,7 @@ router.get('/:id/admins', adminOnly, async (req: Request, res: Response) => {
  * POST /cities/:id/admins
  * Add a DID-based admin to a city
  */
-router.post('/:id/admins', adminOnly, async (req: Request, res: Response) => {
+router.post('/:id/admins', globalAdminAuth, async (req: Request, res: Response) => {
   const { id } = req.params
   const { did, role = 'admin' } = req.body
 
@@ -347,7 +390,7 @@ router.post('/:id/admins', adminOnly, async (req: Request, res: Response) => {
  * DELETE /cities/:id/admins/:adminId
  * Remove a city admin
  */
-router.delete('/:id/admins/:adminId', adminOnly, async (req: Request, res: Response) => {
+router.delete('/:id/admins/:adminId', globalAdminAuth, async (req: Request, res: Response) => {
   const { adminId } = req.params
 
   const cityAdmin = await prisma.cityAdmin.findUnique({ where: { id: adminId } })
@@ -368,7 +411,7 @@ router.delete('/:id/admins/:adminId', adminOnly, async (req: Request, res: Respo
  * GET /cities/admins/global
  * List all global admins (cityId = null)
  */
-router.get('/admins/global', adminOnly, async (_req: Request, res: Response) => {
+router.get('/admins/global', globalAdminAuth, async (_req: Request, res: Response) => {
   const admins = await prisma.cityAdmin.findMany({
     where: { cityId: null },
     orderBy: { createdAt: 'asc' },
@@ -381,7 +424,7 @@ router.get('/admins/global', adminOnly, async (_req: Request, res: Response) => 
  * POST /cities/admins/global
  * Add a global admin
  */
-router.post('/admins/global', adminOnly, async (req: Request, res: Response) => {
+router.post('/admins/global', globalAdminAuth, async (req: Request, res: Response) => {
   const { did, role = 'admin' } = req.body
 
   if (!did) {
