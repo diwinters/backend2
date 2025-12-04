@@ -55,6 +55,18 @@ router.get('/applications', adminOnly, async (req: Request, res: Response) => {
 
 // POST /sellers/applications/:id/approve - Approve seller application (admin)
 router.post('/applications/:id/approve', adminOnly, async (req: Request, res: Response) => {
+  const schema = z.object({
+    cityId: z.string().uuid('Invalid city ID'),
+  });
+
+  const { cityId } = schema.parse(req.body);
+
+  // Verify city exists
+  const city = await prisma.city.findUnique({ where: { id: cityId } });
+  if (!city) {
+    throw new AppError(400, 'City not found');
+  }
+
   const application = await prisma.sellerApplication.findUnique({
     where: { id: req.params.id },
     include: { user: true },
@@ -79,12 +91,13 @@ router.post('/applications/:id/approve', adminOnly, async (req: Request, res: Re
       },
     });
 
-    // Make user a seller
+    // Make user a seller and assign city
     await tx.user.update({
       where: { id: application.userId },
       data: { 
         isSeller: true,
         sellerStatus: SellerStatus.approved,
+        cityId: cityId,
       },
     });
   });
@@ -94,10 +107,10 @@ router.post('/applications/:id/approve', adminOnly, async (req: Request, res: Re
     application.userId,
     NotificationType.seller_application_approved,
     'Seller Application Approved!',
-    'Congratulations! Your seller application has been approved. You can now create listings.',
+    `Congratulations! Your seller application has been approved for ${city.name}. You can now create listings.`,
   );
 
-  return res.json({ message: 'Application approved' });
+  return res.json({ message: 'Application approved', city: { id: city.id, name: city.name } });
 });
 
 // POST /sellers/applications/:id/reject - Reject seller application (admin)

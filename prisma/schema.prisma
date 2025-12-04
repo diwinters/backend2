@@ -25,8 +25,56 @@ model Admin {
   // Relations
   reviewedApplications SellerApplication[] @relation("ReviewedBy")
   reviewedListings     Listing[]           @relation("ReviewedBy")
+  managedCities        City[]              @relation("CityManagedBy")
 
   @@map("admins")
+}
+
+// =============================================================================
+// CITIES & LOCATION-BASED CONTENT
+// =============================================================================
+
+model City {
+  id          String   @id @default(uuid())
+  name        String
+  slug        String   @unique
+  country     String?
+  region      String?  // State/Province
+  centerLat   Decimal  @db.Decimal(10, 8)
+  centerLng   Decimal  @db.Decimal(11, 8)
+  polygon     Json     // Array of [lat, lng] coordinates defining city boundary
+  timezone    String?
+  currency    String   @default("USD")
+  isActive    Boolean  @default(true)
+  order       Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  admins      CityAdmin[]
+  sellers     User[]     @relation("SellerCity")
+  listings    Listing[]  @relation("ListingCity")
+
+  @@map("cities")
+}
+
+// DID-based admin assignment to cities
+// cityId = null means global admin (access to all cities)
+model CityAdmin {
+  id        String   @id @default(uuid())
+  did       String   // Bluesky DID of the admin user
+  cityId    String?  // null = global admin
+  role      String   @default("admin") // admin, moderator, viewer
+  addedById String?  // Admin who added this city admin
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  city City? @relation(fields: [cityId], references: [id], onDelete: Cascade)
+
+  @@unique([did, cityId])
+  @@index([did])
+  @@map("city_admins")
 }
 
 // =============================================================================
@@ -76,12 +124,14 @@ model User {
   heldBalance   Decimal      @default(0) @db.Decimal(12, 2) // Escrow holds
   isSeller      Boolean      @default(false)
   sellerStatus  SellerStatus @default(none)
+  cityId        String?      // Seller's assigned city
   rating        Decimal?     @db.Decimal(2, 1) // 0.0 - 5.0
   ratingCount   Int          @default(0)
   createdAt     DateTime     @default(now())
   updatedAt     DateTime     @updatedAt
 
   // Relations
+  city              City?              @relation("SellerCity", fields: [cityId], references: [id])
   sellerApplication SellerApplication?
   listings          Listing[]
   ordersAsBuyer     Order[]            @relation("Buyer")
@@ -90,6 +140,7 @@ model User {
   notifications     Notification[]
   driverProfile     DriverProfile?
 
+  @@index([cityId])
   @@map("users")
 }
 
@@ -160,6 +211,7 @@ enum ListingStatus {
 model Listing {
   id           String        @id @default(uuid())
   userId       String
+  cityId       String?       // City this listing belongs to (inherited from seller or explicit)
   type         ListingType
   title        String
   description  String?
@@ -178,11 +230,13 @@ model Listing {
 
   // Relations
   user       User    @relation(fields: [userId], references: [id])
+  city       City?   @relation("ListingCity", fields: [cityId], references: [id])
   reviewedBy Admin?  @relation("ReviewedBy", fields: [reviewedById], references: [id])
   orders     Order[]
 
   @@index([type, status])
   @@index([userId])
+  @@index([cityId, status])
   @@map("listings")
 }
 

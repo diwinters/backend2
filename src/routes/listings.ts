@@ -255,15 +255,21 @@ router.post('/', userAuth, async (req: Request, res: Response) => {
     // Verify user is a seller
     const user = await prisma.user.findUnique({
       where: { id: req.user?.id },
+      select: { id: true, isSeller: true, cityId: true },
     });
 
     if (!user || !user.isSeller) {
       throw new AppError(403, 'Must be an approved seller to create listings');
     }
 
+    if (!user.cityId) {
+      throw new AppError(400, 'Seller must be assigned to a city before creating listings');
+    }
+
     const listing = await prisma.listing.create({
       data: {
         userId: req.user!.id,
+        cityId: user.cityId, // Inherit city from seller
         title: data.title,
         description: data.description,
         type: data.type,
@@ -389,7 +395,7 @@ router.delete('/:id', userAuth, async (req: Request, res: Response) => {
 
 // GET /listings/browse - Get listings for browsing (mobile)
 router.get('/browse', userAuth, async (req: Request, res: Response) => {
-  const { type, minPrice, maxPrice, page = '1', limit = '20', sort = 'newest' } = req.query;
+  const { type, cityId, minPrice, maxPrice, page = '1', limit = '20', sort = 'newest' } = req.query;
 
   const cacheKey = `listings:browse:${JSON.stringify(req.query)}`;
   
@@ -402,6 +408,11 @@ router.get('/browse', userAuth, async (req: Request, res: Response) => {
   const where: any = {
     status: 'approved', // Use approved status as per schema
   };
+
+  // City filter - if provided, filter by city; if omitted, show all cities
+  if (cityId && cityId !== 'all') {
+    where.cityId = cityId;
+  }
 
   if (type) where.type = type;
   if (minPrice || maxPrice) {
@@ -445,6 +456,14 @@ router.get('/browse', userAuth, async (req: Request, res: Response) => {
         currency: true,
         images: true,
         metadata: true,
+        cityId: true,
+        city: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+          },
+        },
         user: {
           select: {
             id: true,

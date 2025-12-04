@@ -76,6 +76,14 @@ router.get('/me', userAuth, async (req: Request, res: Response) => {
       heldBalance: true,
       isSeller: true,
       sellerStatus: true,
+      cityId: true,
+      city: {
+        select: {
+          id: true,
+          name: true,
+          slug: true,
+        },
+      },
       rating: true,
       ratingCount: true,
       createdAt: true,
@@ -94,6 +102,43 @@ router.get('/me', userAuth, async (req: Request, res: Response) => {
   }
 
   return res.json(user);
+});
+
+// GET /users/me/admin-status - Check if current user is a city admin
+router.get('/me/admin-status', userAuth, async (req: Request, res: Response) => {
+  const adminRecords = await prisma.cityAdmin.findMany({
+    where: { did: req.user!.did },
+    include: {
+      city: {
+        select: {
+          id: true,
+          name: true,
+          slug: true,
+        },
+      },
+    },
+  });
+
+  const isGlobalAdmin = adminRecords.some(r => r.cityId === null);
+  const cityAdminOf = adminRecords
+    .filter(r => r.cityId !== null)
+    .map(r => ({
+      cityId: r.cityId,
+      cityName: r.city?.name,
+      citySlug: r.city?.slug,
+      role: r.role,
+    }));
+
+  return res.json({
+    isAdmin: adminRecords.length > 0,
+    isGlobalAdmin,
+    cityAdminOf,
+    roles: adminRecords.map(r => ({
+      scope: r.cityId ? 'city' : 'global',
+      cityId: r.cityId,
+      role: r.role,
+    })),
+  });
 });
 
 // GET /users/:did - Get user by DID (public profile)

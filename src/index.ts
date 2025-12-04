@@ -36,6 +36,7 @@ import sellersRoutes from './routes/sellers.js'
 import notificationsRoutes from './routes/notifications.js'
 import configRoutes from './routes/config.js'
 import statsRoutes from './routes/stats.js'
+import citiesRoutes from './routes/cities.js'
 
 // Socket handlers
 import { initSocketHandlers } from './socket/index.js'
@@ -105,6 +106,7 @@ app.use('/api/sellers', sellersRoutes)
 app.use('/api/notifications', notificationsRoutes)
 app.use('/api/config', configRoutes)
 app.use('/api/admin/stats', statsRoutes)
+app.use('/api/cities', citiesRoutes)
 
 // Health check
 app.get('/api/health', (_req, res) => {
