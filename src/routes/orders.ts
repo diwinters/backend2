@@ -369,7 +369,7 @@ router.post('/:id/update-location', userAuth, async (req: Request, res: Response
       throw new AppError(403, 'Only the seller/driver can update location');
     }
 
-    if (![OrderStatus.accepted, OrderStatus.in_progress].includes(order.status)) {
+    if (order.status !== OrderStatus.accepted && order.status !== OrderStatus.in_progress) {
       throw new AppError(400, 'Cannot update location in current status');
     }
 
