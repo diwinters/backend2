@@ -23,7 +23,7 @@ export default function Apps() {
   const [searchQuery, setSearchQuery] = useState('')
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('list')
   const [typeFilter, setTypeFilter] = useState<string>('all')
-  const menuRef = useRef<HTMLElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
 
   // Close menu when clicking outside
   useEffect(() => {
