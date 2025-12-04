@@ -2,7 +2,26 @@ import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import { api } from '../lib/auth'
-import { ArrowLeft, Save, Loader2 } from 'lucide-react'
+import {
+  ArrowLeft,
+  Save,
+  Loader2,
+  Layers,
+  Code2,
+  FileJson,
+  Sparkles,
+  Info,
+  CheckCircle,
+  AlertCircle,
+  Zap,
+  Layout,
+  Rss,
+  Home,
+  ToggleLeft,
+  ToggleRight,
+  Copy,
+  Eye
+} from 'lucide-react'
 
 interface App {
   id: string
@@ -31,6 +50,8 @@ export default function AppEditor() {
     config: '',
   })
   const [errors, setErrors] = useState<Record<string, string>>({})
+  const [jsonValid, setJsonValid] = useState(true)
+  const [copied, setCopied] = useState(false)
 
   const { data: app, isLoading } = useQuery({
     queryKey: ['app', id],
@@ -51,6 +72,20 @@ export default function AppEditor() {
       })
     }
   }, [app])
+
+  // Validate JSON as user types
+  useEffect(() => {
+    if (!form.config.trim()) {
+      setJsonValid(true)
+      return
+    }
+    try {
+      JSON.parse(form.config)
+      setJsonValid(true)
+    } catch {
+      setJsonValid(false)
+    }
+  }, [form.config])
 
   const saveMutation = useMutation({
     mutationFn: async () => {
@@ -122,10 +157,7 @@ export default function AppEditor() {
         return JSON.stringify({
           feed: 'at://did:plc:example/app.bsky.feed.generator/example',
           feedType: 'feed',
-          displayMode: 'timeline', // 'timeline' | 'grid' | 'immersive'
-          // For immersive mode:
-          // immersiveStartPosition: 'top', // 'top' | 'latest' | 'random'
-          // autoPlay: true,
+          displayMode: 'timeline',
         }, null, 2)
       case 'module':
         return JSON.stringify({
@@ -165,170 +197,331 @@ export default function AppEditor() {
     }
   }
 
+  const copyConfig = () => {
+    navigator.clipboard.writeText(form.config)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+
+  const typeConfig = {
+    feed: { icon: Rss, color: 'from-blue-500 to-cyan-500', label: 'Feed', desc: 'Display Bluesky feed content' },
+    module: { icon: Layout, color: 'from-purple-500 to-pink-500', label: 'Module', desc: 'Custom layout with data sources' },
+    home: { icon: Home, color: 'from-amber-500 to-orange-500', label: 'Home', desc: 'Aggregator with widgets' }
+  }
+
   if (!isNew && isLoading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <Loader2 className="w-8 h-8 animate-spin text-gray-400" />
+      <div className="flex items-center justify-center h-64 animate-fade-in">
+        <div className="text-center">
+          <Loader2 className="w-10 h-10 animate-spin text-[var(--accent-primary)] mx-auto mb-3" />
+          <p className="text-[var(--text-secondary)]">Loading app configuration...</p>
+        </div>
       </div>
     )
   }
 
   return (
-    <div>
-      <div className="flex items-center gap-4 mb-6">
-        <button
-          onClick={() => navigate('/apps')}
-          className="p-2 hover:bg-gray-100 rounded-lg"
-        >
-          <ArrowLeft className="w-5 h-5" />
-        </button>
-        <h1 className="text-2xl font-bold text-gray-900">
-          {isNew ? 'Create App' : 'Edit App'}
-        </h1>
+    <div className="animate-fade-in max-w-4xl mx-auto">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-8">
+        <div className="flex items-center gap-4">
+          <button
+            onClick={() => navigate('/apps')}
+            className="p-2.5 rounded-xl glass hover:bg-[var(--bg-tertiary)] transition-colors"
+          >
+            <ArrowLeft className="w-5 h-5 text-[var(--text-secondary)]" />
+          </button>
+          <div>
+            <div className="flex items-center gap-3 mb-1">
+              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center">
+                <Layers className="w-5 h-5 text-white" />
+              </div>
+              <h1 className="text-2xl font-semibold text-[var(--text-primary)]">
+                {isNew ? 'Create App' : 'Edit App'}
+              </h1>
+            </div>
+            <p className="text-[var(--text-secondary)] ml-[52px]">
+              {isNew ? 'Configure a new mini-app for your platform' : `Editing ${app?.name || 'app'}`}
+            </p>
+          </div>
+        </div>
+
+        {/* Preview Badge */}
+        {!isNew && (
+          <div className="flex items-center gap-2 px-4 py-2 rounded-xl bg-[var(--bg-tertiary)]">
+            <Eye className="w-4 h-4 text-[var(--text-secondary)]" />
+            <span className="text-sm text-[var(--text-secondary)]">ID: {id?.slice(0, 8)}...</span>
+          </div>
+        )}
       </div>
 
-      <form onSubmit={handleSubmit} className="max-w-3xl">
-        <div className="bg-white rounded-xl shadow p-6 space-y-6">
-          {errors.submit && (
-            <div className="p-3 text-sm text-red-600 bg-red-50 rounded-lg">
-              {errors.submit}
-            </div>
-          )}
+      <form onSubmit={handleSubmit} className="space-y-6">
+        {/* Error Alert */}
+        {errors.submit && (
+          <div className="flex items-center gap-3 p-4 rounded-2xl bg-red-500/10 border border-red-500/20 animate-fade-in">
+            <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0" />
+            <p className="text-sm text-red-600">{errors.submit}</p>
+          </div>
+        )}
 
-          <div className="grid grid-cols-2 gap-6">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Name *
-              </label>
-              <input
-                type="text"
-                value={form.name}
-                onChange={(e) => setForm({ ...form, name: e.target.value })}
-                className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none"
-                placeholder="Marketplace"
-              />
-              {errors.name && <p className="text-sm text-red-600 mt-1">{errors.name}</p>}
+        {/* Basic Info Card */}
+        <div className="glass rounded-2xl overflow-hidden">
+          <div className="p-4 border-b border-[var(--border-primary)] flex items-center gap-2">
+            <Info className="w-4 h-4 text-[var(--text-tertiary)]" />
+            <span className="text-sm font-medium text-[var(--text-secondary)]">Basic Information</span>
+          </div>
+          
+          <div className="p-6 space-y-6">
+            <div className="grid grid-cols-2 gap-6">
+              {/* Name Field */}
+              <div>
+                <label className="block text-sm font-medium text-[var(--text-primary)] mb-2">
+                  Name <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={form.name}
+                  onChange={(e) => setForm({ ...form, name: e.target.value })}
+                  className={`w-full px-4 py-3 rounded-xl bg-[var(--bg-tertiary)] border ${
+                    errors.name ? 'border-red-500' : 'border-[var(--border-primary)]'
+                  } text-[var(--text-primary)] placeholder-[var(--text-tertiary)] focus:border-[var(--accent-primary)] focus:ring-1 focus:ring-[var(--accent-primary)] outline-none transition-all`}
+                  placeholder="Marketplace"
+                />
+                {errors.name && (
+                  <p className="text-sm text-red-500 mt-1.5 flex items-center gap-1">
+                    <AlertCircle className="w-3.5 h-3.5" />
+                    {errors.name}
+                  </p>
+                )}
+              </div>
+
+              {/* Slug Field */}
+              <div>
+                <label className="block text-sm font-medium text-[var(--text-primary)] mb-2">
+                  Slug <span className="text-red-500">*</span>
+                </label>
+                <div className="relative">
+                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-[var(--text-tertiary)]">/</span>
+                  <input
+                    type="text"
+                    value={form.slug}
+                    onChange={(e) => setForm({ ...form, slug: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '') })}
+                    className={`w-full pl-8 pr-4 py-3 rounded-xl bg-[var(--bg-tertiary)] border ${
+                      errors.slug ? 'border-red-500' : 'border-[var(--border-primary)]'
+                    } text-[var(--text-primary)] placeholder-[var(--text-tertiary)] focus:border-[var(--accent-primary)] focus:ring-1 focus:ring-[var(--accent-primary)] outline-none transition-all font-mono`}
+                    placeholder="marketplace"
+                  />
+                </div>
+                {errors.slug && (
+                  <p className="text-sm text-red-500 mt-1.5 flex items-center gap-1">
+                    <AlertCircle className="w-3.5 h-3.5" />
+                    {errors.slug}
+                  </p>
+                )}
+              </div>
             </div>
 
+            <div className="grid grid-cols-2 gap-6">
+              {/* Icon Field */}
+              <div>
+                <label className="block text-sm font-medium text-[var(--text-primary)] mb-2">
+                  Icon (Emoji)
+                </label>
+                <div className="flex gap-3">
+                  <div className="w-14 h-14 rounded-xl bg-[var(--bg-tertiary)] border border-[var(--border-primary)] flex items-center justify-center text-2xl">
+                    {form.icon || '📱'}
+                  </div>
+                  <input
+                    type="text"
+                    value={form.icon}
+                    onChange={(e) => setForm({ ...form, icon: e.target.value })}
+                    className="flex-1 px-4 py-3 rounded-xl bg-[var(--bg-tertiary)] border border-[var(--border-primary)] text-[var(--text-primary)] placeholder-[var(--text-tertiary)] focus:border-[var(--accent-primary)] focus:ring-1 focus:ring-[var(--accent-primary)] outline-none transition-all text-center text-xl"
+                    placeholder="🛒"
+                    maxLength={4}
+                  />
+                </div>
+              </div>
+
+              {/* Active Toggle */}
+              <div>
+                <label className="block text-sm font-medium text-[var(--text-primary)] mb-2">
+                  Status
+                </label>
+                <button
+                  type="button"
+                  onClick={() => setForm({ ...form, isActive: !form.isActive })}
+                  className={`w-full flex items-center justify-between px-4 py-3 rounded-xl border transition-all ${
+                    form.isActive
+                      ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-600'
+                      : 'bg-[var(--bg-tertiary)] border-[var(--border-primary)] text-[var(--text-secondary)]'
+                  }`}
+                >
+                  <span className="flex items-center gap-2">
+                    {form.isActive ? (
+                      <>
+                        <Zap className="w-4 h-4" />
+                        Active & Visible
+                      </>
+                    ) : (
+                      <>
+                        <ToggleLeft className="w-4 h-4" />
+                        Inactive
+                      </>
+                    )}
+                  </span>
+                  {form.isActive ? (
+                    <ToggleRight className="w-6 h-6" />
+                  ) : (
+                    <ToggleLeft className="w-6 h-6" />
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {/* Description */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Slug *
+              <label className="block text-sm font-medium text-[var(--text-primary)] mb-2">
+                Description
               </label>
-              <input
-                type="text"
-                value={form.slug}
-                onChange={(e) => setForm({ ...form, slug: e.target.value.toLowerCase() })}
-                className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none"
-                placeholder="marketplace"
+              <textarea
+                value={form.description}
+                onChange={(e) => setForm({ ...form, description: e.target.value })}
+                className="w-full px-4 py-3 rounded-xl bg-[var(--bg-tertiary)] border border-[var(--border-primary)] text-[var(--text-primary)] placeholder-[var(--text-tertiary)] focus:border-[var(--accent-primary)] focus:ring-1 focus:ring-[var(--accent-primary)] outline-none transition-all resize-none"
+                rows={2}
+                placeholder="A brief description of this app..."
               />
-              {errors.slug && <p className="text-sm text-red-600 mt-1">{errors.slug}</p>}
             </div>
           </div>
+        </div>
 
-          <div className="grid grid-cols-2 gap-6">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Type *
-              </label>
-              <select
-                value={form.type}
-                onChange={(e) => {
-                  const type = e.target.value as 'feed' | 'module' | 'home'
-                  setForm({ ...form, type, config: '' })
-                }}
-                className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none"
+        {/* Type Selection Card */}
+        <div className="glass rounded-2xl overflow-hidden">
+          <div className="p-4 border-b border-[var(--border-primary)] flex items-center gap-2">
+            <Sparkles className="w-4 h-4 text-[var(--text-tertiary)]" />
+            <span className="text-sm font-medium text-[var(--text-secondary)]">App Type</span>
+          </div>
+          
+          <div className="p-6">
+            <div className="grid grid-cols-3 gap-4">
+              {(['feed', 'module', 'home'] as const).map(type => {
+                const config = typeConfig[type]
+                const Icon = config.icon
+                const isSelected = form.type === type
+                
+                return (
+                  <button
+                    key={type}
+                    type="button"
+                    onClick={() => setForm({ ...form, type, config: '' })}
+                    className={`p-4 rounded-xl border-2 transition-all text-left ${
+                      isSelected
+                        ? 'border-[var(--accent-primary)] bg-[var(--accent-primary)]/5'
+                        : 'border-[var(--border-primary)] hover:border-[var(--text-tertiary)]'
+                    }`}
+                  >
+                    <div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${config.color} flex items-center justify-center mb-3`}>
+                      <Icon className="w-5 h-5 text-white" />
+                    </div>
+                    <h4 className={`font-medium mb-1 ${isSelected ? 'text-[var(--accent-primary)]' : 'text-[var(--text-primary)]'}`}>
+                      {config.label}
+                    </h4>
+                    <p className="text-xs text-[var(--text-tertiary)]">{config.desc}</p>
+                    {isSelected && (
+                      <div className="mt-2 flex items-center gap-1 text-xs text-[var(--accent-primary)]">
+                        <CheckCircle className="w-3.5 h-3.5" />
+                        Selected
+                      </div>
+                    )}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        </div>
+
+        {/* Config Editor Card */}
+        <div className="glass rounded-2xl overflow-hidden">
+          <div className="p-4 border-b border-[var(--border-primary)] flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <FileJson className="w-4 h-4 text-[var(--text-tertiary)]" />
+              <span className="text-sm font-medium text-[var(--text-secondary)]">Configuration (JSON)</span>
+              {form.config && (
+                <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                  jsonValid 
+                    ? 'bg-emerald-500/10 text-emerald-600' 
+                    : 'bg-red-500/10 text-red-500'
+                }`}>
+                  {jsonValid ? 'Valid' : 'Invalid'}
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={copyConfig}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] transition-colors"
               >
-                <option value="feed">Feed (Bluesky Feed)</option>
-                <option value="module">Module (Custom Layout)</option>
-                <option value="home">Home (Aggregator)</option>
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Icon (Emoji)
-              </label>
-              <input
-                type="text"
-                value={form.icon}
-                onChange={(e) => setForm({ ...form, icon: e.target.value })}
-                className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none"
-                placeholder="🛒"
-                maxLength={4}
-              />
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Description
-            </label>
-            <textarea
-              value={form.description}
-              onChange={(e) => setForm({ ...form, description: e.target.value })}
-              className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none"
-              rows={2}
-              placeholder="A brief description of this app..."
-            />
-          </div>
-
-          <div>
-            <div className="flex items-center justify-between mb-1">
-              <label className="block text-sm font-medium text-gray-700">
-                Config (JSON) *
-              </label>
+                {copied ? <CheckCircle className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
+                {copied ? 'Copied!' : 'Copy'}
+              </button>
               <button
                 type="button"
                 onClick={() => setForm({ ...form, config: getConfigTemplate() })}
-                className="text-sm text-primary-600 hover:text-primary-700"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs bg-[var(--accent-primary)]/10 text-[var(--accent-primary)] hover:bg-[var(--accent-primary)]/20 transition-colors"
               >
-                Load template
+                <Code2 className="w-3.5 h-3.5" />
+                Load Template
               </button>
             </div>
+          </div>
+          
+          <div className="relative">
             <textarea
               value={form.config}
               onChange={(e) => setForm({ ...form, config: e.target.value })}
-              className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none font-mono text-sm"
-              rows={12}
-              placeholder="{}"
+              className={`w-full px-4 py-4 bg-[#1e1e2e] text-[#cdd6f4] font-mono text-sm focus:outline-none resize-none ${
+                errors.config ? 'ring-2 ring-red-500' : ''
+              }`}
+              rows={14}
+              placeholder='{"key": "value"}'
+              spellCheck={false}
             />
-            {errors.config && <p className="text-sm text-red-600 mt-1">{errors.config}</p>}
+            {errors.config && (
+              <p className="absolute bottom-3 left-4 text-sm text-red-500 flex items-center gap-1">
+                <AlertCircle className="w-3.5 h-3.5" />
+                {errors.config}
+              </p>
+            )}
           </div>
+        </div>
 
-          <div className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              id="isActive"
-              checked={form.isActive}
-              onChange={(e) => setForm({ ...form, isActive: e.target.checked })}
-              className="w-4 h-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500"
-            />
-            <label htmlFor="isActive" className="text-sm text-gray-700">
-              Active (visible in mobile app)
-            </label>
-          </div>
-
-          <div className="flex items-center gap-4 pt-4 border-t">
-            <button
-              type="submit"
-              disabled={saveMutation.isPending}
-              className="flex items-center gap-2 px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 disabled:opacity-50"
-            >
-              {saveMutation.isPending ? (
+        {/* Action Buttons */}
+        <div className="flex items-center justify-between pt-4">
+          <button
+            type="button"
+            onClick={() => navigate('/apps')}
+            className="px-5 py-2.5 rounded-xl text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] transition-colors"
+          >
+            Cancel
+          </button>
+          
+          <button
+            type="submit"
+            disabled={saveMutation.isPending || !jsonValid}
+            className="flex items-center gap-2 px-6 py-2.5 rounded-xl text-white bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-indigo-500/25"
+          >
+            {saveMutation.isPending ? (
+              <>
                 <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
+                Saving...
+              </>
+            ) : (
+              <>
                 <Save className="w-4 h-4" />
-              )}
-              {saveMutation.isPending ? 'Saving...' : 'Save'}
-            </button>
-            <button
-              type="button"
-              onClick={() => navigate('/apps')}
-              className="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg"
-            >
-              Cancel
-            </button>
-          </div>
+                {isNew ? 'Create App' : 'Save Changes'}
+              </>
+            )}
+          </button>
         </div>
       </form>
     </div>

@@ -9,6 +9,8 @@ import Sellers from './pages/Sellers'
 import SellerApplications from './pages/SellerApplications'
 import Listings from './pages/Listings'
 import Orders from './pages/Orders'
+import Users from './pages/Users'
+import Transactions from './pages/Transactions'
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated())
@@ -29,10 +31,12 @@ export default function App() {
                 <Route path="/apps" element={<Apps />} />
                 <Route path="/apps/new" element={<AppEditor />} />
                 <Route path="/apps/:id" element={<AppEditor />} />
+                <Route path="/users" element={<Users />} />
                 <Route path="/sellers" element={<Sellers />} />
                 <Route path="/sellers/applications" element={<SellerApplications />} />
                 <Route path="/listings" element={<Listings />} />
                 <Route path="/orders" element={<Orders />} />
+                <Route path="/transactions" element={<Transactions />} />
               </Routes>
             </Layout>
           </PrivateRoute>
