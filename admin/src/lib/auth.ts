@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { persist } from 'zustand/middleware'
+import { persist, createJSONStorage } from 'zustand/middleware'
 
 interface Admin {
   id: string
@@ -52,13 +52,13 @@ export const useAuthStore = create<AuthState>()(
     }),
     {
       name: 'admin-auth',
-      storage: {
-        getItem: (name): string | null => {
+      storage: createJSONStorage(() => ({
+        getItem: (name) => {
           const str = localStorage.getItem(name)
           console.log('[STORAGE] getItem:', name, str ? 'found' : 'not found')
           return str
         },
-        setItem: (name, value: string) => {
+        setItem: (name, value) => {
           console.log('[STORAGE] setItem:', name, 'value length:', value.length)
           localStorage.setItem(name, value)
         },
@@ -66,7 +66,7 @@ export const useAuthStore = create<AuthState>()(
           console.log('[STORAGE] removeItem:', name)
           localStorage.removeItem(name)
         },
-      },
+      })),
       onRehydrateStorage: () => (state) => {
         console.log('[AUTH STORE] Rehydrated from localStorage:', {
           hasToken: !!state?.token,
