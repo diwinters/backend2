@@ -29,14 +29,13 @@ router.get('/apps', userAuth, async (req: Request, res: Response) => {
     return res.json(data.apps);
   }
 
-  // Fetch active apps
+  // Fetch active apps (App model uses `enabled` not `isActive`, no `slug` field)
   const apps = await prisma.app.findMany({
-    where: { isActive: true },
+    where: { enabled: true },
     orderBy: { order: 'asc' },
     select: {
       id: true,
       name: true,
-      slug: true,
       type: true,
       icon: true,
       description: true,
@@ -56,9 +55,9 @@ router.get('/apps', userAuth, async (req: Request, res: Response) => {
   return res.json(apps);
 });
 
-// GET /config/app/:slug - Get single app config by slug
-router.get('/app/:slug', userAuth, async (req: Request, res: Response) => {
-  const cacheKey = `config:app:${req.params.slug}`;
+// GET /config/app/:id - Get single app config by id
+router.get('/app/:id', userAuth, async (req: Request, res: Response) => {
+  const cacheKey = `config:app:${req.params.id}`;
   
   // Check cache
   const cached = await redis.get(cacheKey);
@@ -68,13 +67,12 @@ router.get('/app/:slug', userAuth, async (req: Request, res: Response) => {
 
   const app = await prisma.app.findFirst({
     where: { 
-      slug: req.params.slug,
-      isActive: true,
+      id: req.params.id,
+      enabled: true,
     },
     select: {
       id: true,
       name: true,
-      slug: true,
       type: true,
       icon: true,
       description: true,

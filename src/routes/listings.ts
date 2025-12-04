@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma';
 import { redis } from '../lib/redis';
-import { adminOnly, userAuth } from '../middleware/auth';
+import { adminAuth, userAuth } from '../middleware/auth';
 import { AppError } from '../middleware/errorHandler';
 
 const router = Router();
@@ -12,11 +12,10 @@ const CACHE_TTL = 300; // 5 minutes
 
 // Validation schemas
 const createListingSchema = z.object({
-  appId: z.string(),
   title: z.string().min(5).max(200),
   description: z.string().min(20).max(5000),
   type: z.enum(['product', 'experience', 'room', 'service']),
-  price: z.number().int().min(0),
+  price: z.number().min(0),
   currency: z.string().default('USD'),
   images: z.array(z.string().url()).min(1).max(10),
   location: z.object({
@@ -46,7 +45,7 @@ const updateListingSchema = createListingSchema.partial();
 // ==================== ADMIN ROUTES ====================
 
 // GET /listings/pending - Get pending listings for approval (admin)
-router.get('/pending', adminOnly, async (req: Request, res: Response) => {
+router.get('/pending', adminAuth, async (req: Request, res: Response) => {
   const { page = '1', limit = '20' } = req.query;
 
   const skip = (parseInt(page as string) - 1) * parseInt(limit as string);
@@ -59,18 +58,15 @@ router.get('/pending', adminOnly, async (req: Request, res: Response) => {
       take,
       orderBy: { createdAt: 'asc' },
       include: {
-        seller: {
+        user: {
           select: {
             id: true,
             did: true,
             handle: true,
             displayName: true,
-            avatarUrl: true,
-            sellerRating: true,
+            avatar: true,
+            rating: true,
           },
-        },
-        app: {
-          select: { id: true, name: true, slug: true },
         },
       },
     }),
@@ -89,7 +85,7 @@ router.get('/pending', adminOnly, async (req: Request, res: Response) => {
 });
 
 // POST /listings/:id/approve - Approve listing (admin)
-router.post('/:id/approve', adminOnly, async (req: Request, res: Response) => {
+router.post('/:id/approve', adminAuth, async (req: Request, res: Response) => {
   const listing = await prisma.listing.findUnique({
     where: { id: req.params.id },
   });
@@ -104,28 +100,29 @@ router.post('/:id/approve', adminOnly, async (req: Request, res: Response) => {
 
   await prisma.listing.update({
     where: { id: listing.id },
-    data: { status: 'active' },
+    data: { 
+      status: 'approved',
+      reviewedById: req.admin?.id,
+      reviewedAt: new Date(),
+    },
   });
-
-  // Invalidate cache
-  await redis.del(`listings:app:${listing.appId}`);
 
   // Notify seller
   const { NotificationService } = await import('../services/NotificationService');
   const notificationService = new NotificationService();
-  await notificationService.create({
-    userId: listing.sellerId,
-    type: 'listing_approved',
-    title: 'Listing Approved!',
-    body: `Your listing "${listing.title}" has been approved and is now live.`,
-    data: { listingId: listing.id },
-  });
+  await notificationService.create(
+    listing.userId,
+    'listing_approved',
+    'Listing Approved!',
+    `Your listing "${listing.title}" has been approved.`,
+    { listingId: listing.id }
+  );
 
   return res.json({ message: 'Listing approved' });
 });
 
 // POST /listings/:id/reject - Reject listing (admin)
-router.post('/:id/reject', adminOnly, async (req: Request, res: Response) => {
+router.post('/:id/reject', adminAuth, async (req: Request, res: Response) => {
   const schema = z.object({
     reason: z.string().min(10),
   });
@@ -149,24 +146,22 @@ router.post('/:id/reject', adminOnly, async (req: Request, res: Response) => {
       where: { id: listing.id },
       data: { 
         status: 'rejected',
-        metadata: {
-          ...(listing.metadata as any),
-          rejectionReason: reason,
-          rejectedAt: new Date(),
-        },
+        reviewedById: req.admin?.id,
+        reviewedAt: new Date(),
+        reviewNotes: reason,
       },
     });
 
     // Notify seller
     const { NotificationService } = await import('../services/NotificationService');
     const notificationService = new NotificationService();
-    await notificationService.create({
-      userId: listing.sellerId,
-      type: 'listing_rejected',
-      title: 'Listing Not Approved',
-      body: `Your listing "${listing.title}" was not approved. Reason: ${reason}`,
-      data: { listingId: listing.id },
-    });
+    await notificationService.create(
+      listing.userId,
+      'listing_rejected',
+      'Listing Not Approved',
+      `Your listing "${listing.title}" was not approved. Reason: ${reason}`,
+      { listingId: listing.id }
+    );
 
     return res.json({ message: 'Listing rejected' });
   } catch (error) {
@@ -178,12 +173,11 @@ router.post('/:id/reject', adminOnly, async (req: Request, res: Response) => {
 });
 
 // GET /listings - List all listings (admin)
-router.get('/', adminOnly, async (req: Request, res: Response) => {
-  const { status, appId, type, page = '1', limit = '20' } = req.query;
+router.get('/', adminAuth, async (req: Request, res: Response) => {
+  const { status, type, page = '1', limit = '20' } = req.query;
 
   const where: any = {};
   if (status) where.status = status;
-  if (appId) where.appId = appId;
   if (type) where.type = type;
 
   const skip = (parseInt(page as string) - 1) * parseInt(limit as string);
@@ -196,11 +190,8 @@ router.get('/', adminOnly, async (req: Request, res: Response) => {
       take,
       orderBy: { createdAt: 'desc' },
       include: {
-        seller: {
+        user: {
           select: { handle: true, displayName: true },
-        },
-        app: {
-          select: { name: true, slug: true },
         },
       },
     }),
@@ -224,7 +215,7 @@ router.get('/', adminOnly, async (req: Request, res: Response) => {
 router.get('/my', userAuth, async (req: Request, res: Response) => {
   const { status, page = '1', limit = '20' } = req.query;
 
-  const where: any = { sellerId: req.userId };
+  const where: any = { userId: req.user?.id };
   if (status) where.status = status;
 
   const skip = (parseInt(page as string) - 1) * parseInt(limit as string);
@@ -237,9 +228,6 @@ router.get('/my', userAuth, async (req: Request, res: Response) => {
       take,
       orderBy: { createdAt: 'desc' },
       include: {
-        app: {
-          select: { name: true, slug: true },
-        },
         _count: {
           select: { orders: true },
         },
@@ -266,40 +254,25 @@ router.post('/', userAuth, async (req: Request, res: Response) => {
 
     // Verify user is a seller
     const user = await prisma.user.findUnique({
-      where: { id: req.userId },
+      where: { id: req.user?.id },
     });
 
     if (!user || !user.isSeller) {
       throw new AppError(403, 'Must be an approved seller to create listings');
     }
 
-    // Verify app exists and is active
-    const app = await prisma.app.findUnique({
-      where: { id: data.appId },
-    });
-
-    if (!app || !app.isActive) {
-      throw new AppError(400, 'Invalid or inactive app');
-    }
-
-    // Verify app is a module type (not feed or home)
-    if (app.type !== 'module') {
-      throw new AppError(400, 'Listings can only be created for module apps');
-    }
-
     const listing = await prisma.listing.create({
       data: {
-        sellerId: req.userId!,
-        appId: data.appId,
+        userId: req.user!.id,
         title: data.title,
         description: data.description,
         type: data.type,
         price: data.price,
         currency: data.currency,
         images: data.images,
-        location: data.location as any,
         metadata: {
           ...data.metadata,
+          location: data.location,
           availability: data.availability,
           duration: data.duration,
           maxGuests: data.maxGuests,
@@ -308,11 +281,6 @@ router.post('/', userAuth, async (req: Request, res: Response) => {
           requirements: data.requirements,
         },
         status: 'pending', // Requires admin approval
-      },
-      include: {
-        app: {
-          select: { name: true, slug: true },
-        },
       },
     });
 
@@ -338,23 +306,28 @@ router.put('/:id', userAuth, async (req: Request, res: Response) => {
       throw new AppError(404, 'Listing not found');
     }
 
-    if (listing.sellerId !== req.userId) {
+    if (listing.userId !== req.user?.id) {
       throw new AppError(403, 'Not authorized to update this listing');
     }
 
-    // If listing is active and significant changes made, set back to pending
-    const needsReapproval = listing.status === 'active' && (
+    // If listing is approved and significant changes made, set back to pending
+    const needsReapproval = listing.status === 'approved' && (
       data.title || data.description || data.price || data.images
     );
 
     const updatedListing = await prisma.listing.update({
       where: { id: listing.id },
       data: {
-        ...data,
-        location: data.location as any,
+        title: data.title,
+        description: data.description,
+        type: data.type,
+        price: data.price,
+        currency: data.currency,
+        images: data.images,
         metadata: {
           ...(listing.metadata as any),
           ...data.metadata,
+          location: data.location,
           availability: data.availability,
           duration: data.duration,
           maxGuests: data.maxGuests,
@@ -368,7 +341,6 @@ router.put('/:id', userAuth, async (req: Request, res: Response) => {
     });
 
     // Invalidate cache
-    await redis.del(`listings:app:${listing.appId}`);
     await redis.del(`listing:${listing.id}`);
 
     return res.json(updatedListing);
@@ -391,15 +363,15 @@ router.delete('/:id', userAuth, async (req: Request, res: Response) => {
     throw new AppError(404, 'Listing not found');
   }
 
-  if (listing.sellerId !== req.userId) {
+  if (listing.userId !== req.user?.id) {
     throw new AppError(403, 'Not authorized to delete this listing');
   }
 
-  // If has orders, just deactivate
+  // If has orders, just mark as deleted
   if (listing._count.orders > 0) {
     await prisma.listing.update({
       where: { id: listing.id },
-      data: { status: 'inactive' },
+      data: { status: 'deleted' },
     });
   } else {
     await prisma.listing.delete({
@@ -408,7 +380,6 @@ router.delete('/:id', userAuth, async (req: Request, res: Response) => {
   }
 
   // Invalidate cache
-  await redis.del(`listings:app:${listing.appId}`);
   await redis.del(`listing:${listing.id}`);
 
   return res.status(204).send();
@@ -416,11 +387,11 @@ router.delete('/:id', userAuth, async (req: Request, res: Response) => {
 
 // ==================== PUBLIC/MOBILE ROUTES ====================
 
-// GET /listings/app/:appId - Get listings for an app (mobile)
-router.get('/app/:appId', userAuth, async (req: Request, res: Response) => {
-  const { type, minPrice, maxPrice, location, page = '1', limit = '20', sort = 'newest' } = req.query;
+// GET /listings/browse - Get listings for browsing (mobile)
+router.get('/browse', userAuth, async (req: Request, res: Response) => {
+  const { type, minPrice, maxPrice, page = '1', limit = '20', sort = 'newest' } = req.query;
 
-  const cacheKey = `listings:app:${req.params.appId}:${JSON.stringify(req.query)}`;
+  const cacheKey = `listings:browse:${JSON.stringify(req.query)}`;
   
   // Check cache
   const cached = await redis.get(cacheKey);
@@ -429,8 +400,7 @@ router.get('/app/:appId', userAuth, async (req: Request, res: Response) => {
   }
 
   const where: any = {
-    appId: req.params.appId,
-    status: 'active',
+    status: 'approved', // Use approved status as per schema
   };
 
   if (type) where.type = type;
@@ -450,7 +420,7 @@ router.get('/app/:appId', userAuth, async (req: Request, res: Response) => {
       orderBy = { price: 'desc' };
       break;
     case 'rating':
-      orderBy = { seller: { sellerRating: 'desc' } };
+      orderBy = { user: { rating: 'desc' } };
       break;
     case 'newest':
     default:
@@ -474,17 +444,16 @@ router.get('/app/:appId', userAuth, async (req: Request, res: Response) => {
         price: true,
         currency: true,
         images: true,
-        location: true,
         metadata: true,
-        seller: {
+        user: {
           select: {
             id: true,
             did: true,
             handle: true,
             displayName: true,
-            avatarUrl: true,
-            sellerRating: true,
-            sellerReviewCount: true,
+            avatar: true,
+            rating: true,
+            ratingCount: true,
           },
         },
       },
@@ -521,24 +490,21 @@ router.get('/detail/:id', userAuth, async (req: Request, res: Response) => {
   const listing = await prisma.listing.findUnique({
     where: { id: req.params.id },
     include: {
-      seller: {
+      user: {
         select: {
           id: true,
           did: true,
           handle: true,
           displayName: true,
-          avatarUrl: true,
-          sellerRating: true,
-          sellerReviewCount: true,
+          avatar: true,
+          rating: true,
+          ratingCount: true,
         },
-      },
-      app: {
-        select: { id: true, name: true, slug: true },
       },
     },
   });
 
-  if (!listing || listing.status !== 'active') {
+  if (!listing || (listing.status !== 'approved' && listing.status !== 'live')) {
     throw new AppError(404, 'Listing not found');
   }
 

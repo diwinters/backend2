@@ -4,7 +4,7 @@ import jwt from 'jsonwebtoken';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma';
 import { config } from '../config';
-import { adminOnly } from '../middleware/auth';
+import { adminAuth } from '../middleware/auth';
 
 const router = Router();
 
@@ -39,16 +39,10 @@ router.post('/login', async (req: Request, res: Response) => {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    // Update last login
-    await prisma.admin.update({
-      where: { id: admin.id },
-      data: { lastLoginAt: new Date() },
-    });
-
-    // Generate JWT
+    // Generate JWT (Admin model doesn't have role or lastLoginAt)
     const token = jwt.sign(
-      { adminId: admin.id, email: admin.email, role: admin.role },
-      config.JWT_SECRET,
+      { adminId: admin.id, email: admin.email },
+      config.jwt.secret,
       { expiresIn: '24h' }
     );
 
@@ -58,7 +52,6 @@ router.post('/login', async (req: Request, res: Response) => {
         id: admin.id,
         email: admin.email,
         name: admin.name,
-        role: admin.role,
       },
     });
   } catch (error) {
@@ -70,16 +63,14 @@ router.post('/login', async (req: Request, res: Response) => {
 });
 
 // GET /auth/me - Get current admin
-router.get('/me', adminOnly, async (req: Request, res: Response) => {
+router.get('/me', adminAuth, async (req: Request, res: Response) => {
   const admin = await prisma.admin.findUnique({
-    where: { id: req.adminId },
+    where: { id: req.admin?.id },
     select: {
       id: true,
       email: true,
       name: true,
-      role: true,
       createdAt: true,
-      lastLoginAt: true,
     },
   });
 
@@ -90,17 +81,8 @@ router.get('/me', adminOnly, async (req: Request, res: Response) => {
   return res.json(admin);
 });
 
-// POST /auth/admin - Create new admin (super_admin only)
-router.post('/admin', adminOnly, async (req: Request, res: Response) => {
-  // Check if current admin is super_admin
-  const currentAdmin = await prisma.admin.findUnique({
-    where: { id: req.adminId },
-  });
-
-  if (currentAdmin?.role !== 'super_admin') {
-    return res.status(403).json({ error: 'Only super admins can create new admins' });
-  }
-
+// POST /auth/admin - Create new admin
+router.post('/admin', adminAuth, async (req: Request, res: Response) => {
   try {
     const { email, password, name } = createAdminSchema.parse(req.body);
 
@@ -120,13 +102,11 @@ router.post('/admin', adminOnly, async (req: Request, res: Response) => {
         email,
         passwordHash,
         name,
-        role: 'admin',
       },
       select: {
         id: true,
         email: true,
         name: true,
-        role: true,
         createdAt: true,
       },
     });
@@ -141,7 +121,7 @@ router.post('/admin', adminOnly, async (req: Request, res: Response) => {
 });
 
 // POST /auth/change-password - Change password
-router.post('/change-password', adminOnly, async (req: Request, res: Response) => {
+router.post('/change-password', adminAuth, async (req: Request, res: Response) => {
   const schema = z.object({
     currentPassword: z.string(),
     newPassword: z.string().min(8),
@@ -151,7 +131,7 @@ router.post('/change-password', adminOnly, async (req: Request, res: Response) =
     const { currentPassword, newPassword } = schema.parse(req.body);
 
     const admin = await prisma.admin.findUnique({
-      where: { id: req.adminId },
+      where: { id: req.admin?.id },
     });
 
     if (!admin) {

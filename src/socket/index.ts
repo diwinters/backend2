@@ -1,8 +1,8 @@
 import { Server as SocketServer, Socket } from 'socket.io';
 import jwt from 'jsonwebtoken';
-import { config } from '../config/index';
-import { prisma } from '../lib/prisma';
-import { subscriber } from '../lib/redis';
+import { config } from '../config/index.js';
+import { prisma } from '../lib/prisma.js';
+import { redisSub } from '../lib/redis.js';
 
 interface AuthenticatedSocket extends Socket {
   userId?: string;
@@ -22,8 +22,8 @@ export function initSocketHandlers(io: SocketServer) {
 
       if (token) {
         // Admin authentication via JWT
-        const decoded = jwt.verify(token, config.jwtSecret) as { adminId: string };
-        socket.adminId = decoded.adminId;
+        const decoded = jwt.verify(token, config.jwt.secret) as { id: string };
+        socket.adminId = decoded.id;
         return next();
       }
 
@@ -114,11 +114,11 @@ export function initSocketHandlers(io: SocketServer) {
         where: { id: data.orderId },
         data: {
           metadata: {
-            ...(order.metadata as any),
+            ...(order.metadata as object || {}),
             currentLocation: {
               lat: data.lat,
               lng: data.lng,
-              updatedAt: new Date(),
+              updatedAt: new Date().toISOString(),
             },
             eta: data.eta,
           },
@@ -174,13 +174,13 @@ export function initSocketHandlers(io: SocketServer) {
   // ==================== REDIS PUB/SUB INTEGRATION ====================
   
   // Listen for notifications from Redis pub/sub
-  subscriber.subscribe('notifications', (err) => {
+  redisSub.subscribe('notifications', (err: Error | null) => {
     if (err) {
       console.error('Failed to subscribe to notifications channel:', err);
     }
   });
 
-  subscriber.on('message', (channel, message) => {
+  redisSub.on('message', (channel: string, message: string) => {
     if (channel === 'notifications') {
       try {
         const notification = JSON.parse(message);
@@ -199,13 +199,13 @@ export function initSocketHandlers(io: SocketServer) {
   });
 
   // Subscribe to order location updates
-  subscriber.psubscribe('order:*:location', (err) => {
+  redisSub.psubscribe('order:*:location', (err: Error | null) => {
     if (err) {
       console.error('Failed to subscribe to order locations:', err);
     }
   });
 
-  subscriber.on('pmessage', (pattern, channel, message) => {
+  redisSub.on('pmessage', (pattern: string, channel: string, message: string) => {
     if (pattern === 'order:*:location') {
       try {
         const orderId = channel.split(':')[1];
@@ -224,12 +224,12 @@ export function initSocketHandlers(io: SocketServer) {
 }
 
 // Helper to send notification to specific user
-export function sendToUser(io: SocketServer, userId: string, event: string, data: any) {
+export function sendToUser(io: SocketServer, userId: string, event: string, data: unknown) {
   io.to(`user:${userId}`).emit(event, data);
 }
 
 // Helper to send to all connected admins
-export function sendToAdmins(io: SocketServer, event: string, data: any) {
+export function sendToAdmins(io: SocketServer, event: string, data: unknown) {
   io.to('admin').emit(event, data);
 }
 

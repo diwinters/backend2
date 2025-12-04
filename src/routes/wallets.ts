@@ -1,12 +1,12 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
-import { prisma } from '../lib/prisma';
-import { adminOnly, userAuth } from '../middleware/auth';
-import { WalletService } from '../services/WalletService';
-import { AppError } from '../middleware/errorHandler';
+import { TransactionType } from '@prisma/client';
+import { Decimal } from '@prisma/client/runtime/library';
+import { prisma } from '../lib/prisma.js';
+import { adminOnly, userAuth } from '../middleware/auth.js';
+import { AppError } from '../middleware/errorHandler.js';
 
 const router = Router();
-const walletService = new WalletService();
 
 // ==================== ADMIN ROUTES ====================
 
@@ -34,11 +34,11 @@ router.get('/', adminOnly, async (req: Request, res: Response) => {
         handle: true,
         displayName: true,
         walletBalance: true,
-        walletHeld: true,
+        heldBalance: true,
         _count: {
           select: {
-            buyerOrders: true,
-            sellerOrders: true,
+            ordersAsBuyer: true,
+            ordersAsSeller: true,
             transactions: true,
           },
         },
@@ -113,15 +113,16 @@ router.post('/:userId/adjust', adminOnly, async (req: Request, res: Response) =>
       throw new AppError(404, 'User not found');
     }
 
-    if (type === 'debit' && user.walletBalance < amount) {
+    const currentBalance = Number(user.walletBalance);
+    if (type === 'debit' && currentBalance < amount) {
       throw new AppError(400, 'Insufficient balance for debit');
     }
 
     // Create adjustment transaction
     const transaction = await prisma.$transaction(async (tx) => {
       const newBalance = type === 'credit' 
-        ? user.walletBalance + amount 
-        : user.walletBalance - amount;
+        ? currentBalance + amount 
+        : currentBalance - amount;
 
       await tx.user.update({
         where: { id: user.id },
@@ -131,12 +132,13 @@ router.post('/:userId/adjust', adminOnly, async (req: Request, res: Response) =>
       return tx.transaction.create({
         data: {
           userId: user.id,
-          type: type === 'credit' ? 'deposit' : 'withdrawal',
+          type: type === 'credit' ? TransactionType.deposit : TransactionType.withdrawal,
           amount: type === 'credit' ? amount : -amount,
-          currency: 'USD',
+          balanceBefore: currentBalance,
+          balanceAfter: newBalance,
           status: 'completed',
           description: `Admin adjustment: ${reason}`,
-          metadata: { adminId: req.adminId, reason },
+          metadata: { adminId: req.admin!.id, reason },
         },
       });
     });
@@ -155,10 +157,10 @@ router.post('/:userId/adjust', adminOnly, async (req: Request, res: Response) =>
 // GET /wallets/my - Get current user's wallet
 router.get('/my', userAuth, async (req: Request, res: Response) => {
   const user = await prisma.user.findUnique({
-    where: { id: req.userId },
+    where: { id: req.user!.id },
     select: {
       walletBalance: true,
-      walletHeld: true,
+      heldBalance: true,
     },
   });
 
@@ -166,10 +168,13 @@ router.get('/my', userAuth, async (req: Request, res: Response) => {
     throw new AppError(404, 'User not found');
   }
 
+  const balance = Number(user.walletBalance);
+  const held = Number(user.heldBalance);
+
   return res.json({
-    balance: user.walletBalance,
-    held: user.walletHeld,
-    available: user.walletBalance - user.walletHeld,
+    balance,
+    held,
+    available: balance - held,
   });
 });
 
@@ -180,7 +185,7 @@ router.get('/my/transactions', userAuth, async (req: Request, res: Response) => 
   const skip = (parseInt(page as string) - 1) * parseInt(limit as string);
   const take = parseInt(limit as string);
 
-  const where: any = { userId: req.userId };
+  const where: any = { userId: req.user!.id };
   if (type) where.type = type;
 
   const [transactions, total] = await Promise.all([
@@ -225,13 +230,22 @@ router.post('/my/deposit', userAuth, async (req: Request, res: Response) => {
   try {
     const { amount, method } = schema.parse(req.body);
 
+    const user = await prisma.user.findUnique({
+      where: { id: req.user!.id },
+    });
+
+    if (!user) {
+      throw new AppError(404, 'User not found');
+    }
+
     // Create pending deposit transaction
     const transaction = await prisma.transaction.create({
       data: {
-        userId: req.userId!,
-        type: 'deposit',
+        userId: req.user!.id,
+        type: TransactionType.deposit,
         amount,
-        currency: 'USD',
+        balanceBefore: Number(user.walletBalance),
+        balanceAfter: Number(user.walletBalance), // Updated when completed
         status: 'pending',
         description: `Deposit via ${method}`,
         metadata: { method },
@@ -273,14 +287,17 @@ router.post('/my/withdraw', userAuth, async (req: Request, res: Response) => {
     const { amount, method, destination } = schema.parse(req.body);
 
     const user = await prisma.user.findUnique({
-      where: { id: req.userId },
+      where: { id: req.user!.id },
     });
 
     if (!user) {
       throw new AppError(404, 'User not found');
     }
 
-    const available = user.walletBalance - user.walletHeld;
+    const balance = Number(user.walletBalance);
+    const held = Number(user.heldBalance);
+    const available = balance - held;
+    
     if (available < amount) {
       throw new AppError(400, `Insufficient available balance. Available: ${available}`);
     }
@@ -295,15 +312,16 @@ router.post('/my/withdraw', userAuth, async (req: Request, res: Response) => {
       // Hold the amount
       await tx.user.update({
         where: { id: user.id },
-        data: { walletHeld: { increment: amount } },
+        data: { heldBalance: { increment: amount } },
       });
 
       return tx.transaction.create({
         data: {
           userId: user.id,
-          type: 'withdrawal',
+          type: TransactionType.withdrawal,
           amount: -amount,
-          currency: 'USD',
+          balanceBefore: balance,
+          balanceAfter: balance, // Updated when completed
           status: 'pending',
           description: `Withdrawal via ${method}`,
           metadata: { method, destination },
@@ -342,22 +360,26 @@ router.post('/webhook/deposit-confirm', async (req: Request, res: Response) => {
       where: { id: transactionId },
     });
 
-    if (!transaction || transaction.type !== 'deposit' || transaction.status !== 'pending') {
+    if (!transaction || transaction.type !== TransactionType.deposit || transaction.status !== 'pending') {
       throw new AppError(400, 'Invalid transaction');
     }
 
     if (status === 'completed') {
       await prisma.$transaction(async (tx) => {
+        const user = await tx.user.findUnique({ where: { id: transaction.userId } });
+        const newBalance = Number(user!.walletBalance) + Number(transaction.amount);
+
         await tx.user.update({
           where: { id: transaction.userId },
-          data: { walletBalance: { increment: transaction.amount } },
+          data: { walletBalance: newBalance },
         });
 
         await tx.transaction.update({
           where: { id: transaction.id },
           data: { 
             status: 'completed',
-            metadata: { ...(transaction.metadata as any), externalId },
+            balanceAfter: newBalance,
+            metadata: { ...(transaction.metadata as object || {}), externalId },
           },
         });
       });

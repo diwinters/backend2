@@ -127,3 +127,6 @@ export async function optionalUserAuth(req: Request, _res: Response, next: NextF
     next(error)
   }
 }
+
+// Alias for adminAuth - used by routes
+export const adminOnly = adminAuth

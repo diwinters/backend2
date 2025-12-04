@@ -1,8 +1,9 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
-import { prisma } from '../lib/prisma';
-import { userAuth } from '../middleware/auth';
-import { AppError } from '../middleware/errorHandler';
+import { ListingStatus } from '@prisma/client';
+import { prisma } from '../lib/prisma.js';
+import { userAuth } from '../middleware/auth.js';
+import { AppError } from '../middleware/errorHandler.js';
 
 const router = Router();
 
@@ -13,14 +14,14 @@ router.post('/sync', userAuth, async (req: Request, res: Response) => {
     did: z.string(),
     handle: z.string(),
     displayName: z.string().optional(),
-    avatarUrl: z.string().url().optional(),
+    avatar: z.string().url().optional(),
   });
 
   try {
     const data = schema.parse(req.body);
 
     // Verify DID matches auth header
-    if (data.did !== req.userDid) {
+    if (data.did !== req.user!.did) {
       throw new AppError(400, 'DID mismatch');
     }
 
@@ -29,27 +30,25 @@ router.post('/sync', userAuth, async (req: Request, res: Response) => {
       update: {
         handle: data.handle,
         displayName: data.displayName,
-        avatarUrl: data.avatarUrl,
-        lastSeenAt: new Date(),
+        avatar: data.avatar,
       },
       create: {
         did: data.did,
         handle: data.handle,
         displayName: data.displayName,
-        avatarUrl: data.avatarUrl,
-        lastSeenAt: new Date(),
+        avatar: data.avatar,
       },
       select: {
         id: true,
         did: true,
         handle: true,
         displayName: true,
-        avatarUrl: true,
+        avatar: true,
         walletBalance: true,
-        walletHeld: true,
+        heldBalance: true,
         isSeller: true,
-        sellerRating: true,
-        sellerReviewCount: true,
+        rating: true,
+        ratingCount: true,
         createdAt: true,
       },
     });
@@ -66,23 +65,24 @@ router.post('/sync', userAuth, async (req: Request, res: Response) => {
 // GET /users/me - Get current user profile
 router.get('/me', userAuth, async (req: Request, res: Response) => {
   const user = await prisma.user.findUnique({
-    where: { id: req.userId },
+    where: { id: req.user!.id },
     select: {
       id: true,
       did: true,
       handle: true,
       displayName: true,
-      avatarUrl: true,
+      avatar: true,
       walletBalance: true,
-      walletHeld: true,
+      heldBalance: true,
       isSeller: true,
-      sellerRating: true,
-      sellerReviewCount: true,
+      sellerStatus: true,
+      rating: true,
+      ratingCount: true,
       createdAt: true,
       _count: {
         select: {
-          buyerOrders: true,
-          sellerOrders: true,
+          ordersAsBuyer: true,
+          ordersAsSeller: true,
           listings: true,
         },
       },
@@ -105,14 +105,14 @@ router.get('/:did', userAuth, async (req: Request, res: Response) => {
       did: true,
       handle: true,
       displayName: true,
-      avatarUrl: true,
+      avatar: true,
       isSeller: true,
-      sellerRating: true,
-      sellerReviewCount: true,
+      rating: true,
+      ratingCount: true,
       createdAt: true,
       // Only show listings if seller
       listings: {
-        where: { status: 'active' },
+        where: { status: ListingStatus.live },
         take: 10,
         orderBy: { createdAt: 'desc' },
         select: {
@@ -138,36 +138,25 @@ router.get('/:did', userAuth, async (req: Request, res: Response) => {
 router.put('/me', userAuth, async (req: Request, res: Response) => {
   const schema = z.object({
     displayName: z.string().max(100).optional(),
-    avatarUrl: z.string().url().optional(),
-    // Seller-specific settings
-    sellerBio: z.string().max(500).optional(),
-    sellerLocation: z.object({
-      city: z.string(),
-      country: z.string(),
-    }).optional(),
+    avatar: z.string().url().optional(),
   });
 
   try {
     const data = schema.parse(req.body);
 
     const user = await prisma.user.update({
-      where: { id: req.userId },
+      where: { id: req.user!.id },
       data: {
         displayName: data.displayName,
-        avatarUrl: data.avatarUrl,
-        metadata: {
-          sellerBio: data.sellerBio,
-          sellerLocation: data.sellerLocation,
-        },
+        avatar: data.avatar,
       },
       select: {
         id: true,
         did: true,
         handle: true,
         displayName: true,
-        avatarUrl: true,
+        avatar: true,
         isSeller: true,
-        metadata: true,
       },
     });
 
@@ -191,8 +180,8 @@ router.get('/me/activity', userAuth, async (req: Request, res: Response) => {
   const orders = await prisma.order.findMany({
     where: {
       OR: [
-        { buyerId: req.userId },
-        { sellerId: req.userId },
+        { buyerId: req.user!.id },
+        { sellerId: req.user!.id },
       ],
     },
     skip,
@@ -201,15 +190,14 @@ router.get('/me/activity', userAuth, async (req: Request, res: Response) => {
     select: {
       id: true,
       status: true,
-      amount: true,
-      currency: true,
+      totalAmount: true,
       createdAt: true,
       updatedAt: true,
       buyer: {
-        select: { handle: true, displayName: true, avatarUrl: true },
+        select: { handle: true, displayName: true, avatar: true },
       },
       seller: {
-        select: { handle: true, displayName: true, avatarUrl: true },
+        select: { handle: true, displayName: true, avatar: true },
       },
       listing: {
         select: { title: true, images: true },
@@ -219,14 +207,13 @@ router.get('/me/activity', userAuth, async (req: Request, res: Response) => {
 
   // Get recent transactions
   const transactions = await prisma.transaction.findMany({
-    where: { userId: req.userId },
+    where: { userId: req.user!.id },
     take: 10,
     orderBy: { createdAt: 'desc' },
     select: {
       id: true,
       type: true,
       amount: true,
-      currency: true,
       status: true,
       description: true,
       createdAt: true,

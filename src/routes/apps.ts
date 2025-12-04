@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma';
 import { redis } from '../lib/redis';
-import { adminOnly, userAuth } from '../middleware/auth';
+import { adminAuth, userAuth } from '../middleware/auth';
 import { AppError } from '../middleware/errorHandler';
 
 const router = Router();
@@ -67,13 +67,12 @@ const homeConfigSchema = z.object({
 
 const createAppSchema = z.object({
   name: z.string().min(2).max(100),
-  slug: z.string().min(2).max(50).regex(/^[a-z0-9-]+$/),
   type: z.enum(['feed', 'module', 'home']),
   icon: z.string().optional(),
   description: z.string().optional(),
   config: z.union([feedConfigSchema, moduleConfigSchema, homeConfigSchema]),
   order: z.number().int().min(0).optional(),
-  isActive: z.boolean().optional(),
+  enabled: z.boolean().optional(),
 });
 
 const updateAppSchema = createAppSchema.partial();
@@ -90,39 +89,25 @@ async function invalidateAppCache(appId?: string) {
 // ==================== ADMIN ROUTES ====================
 
 // GET /apps - List all apps (admin)
-router.get('/', adminOnly, async (req: Request, res: Response) => {
-  const { type, isActive } = req.query;
+router.get('/', adminAuth, async (req: Request, res: Response) => {
+  const { type, enabled } = req.query;
 
   const where: any = {};
   if (type) where.type = type;
-  if (isActive !== undefined) where.isActive = isActive === 'true';
+  if (enabled !== undefined) where.enabled = enabled === 'true';
 
   const apps = await prisma.app.findMany({
     where,
     orderBy: { order: 'asc' },
-    include: {
-      _count: {
-        select: { listings: true },
-      },
-    },
   });
 
   return res.json(apps);
 });
 
 // POST /apps - Create new app (admin)
-router.post('/', adminOnly, async (req: Request, res: Response) => {
+router.post('/', adminAuth, async (req: Request, res: Response) => {
   try {
     const data = createAppSchema.parse(req.body);
-
-    // Check slug uniqueness
-    const existing = await prisma.app.findUnique({
-      where: { slug: data.slug },
-    });
-
-    if (existing) {
-      throw new AppError(409, 'App with this slug already exists');
-    }
 
     // Validate config based on type
     if (data.type === 'feed') {
@@ -136,13 +121,12 @@ router.post('/', adminOnly, async (req: Request, res: Response) => {
     const app = await prisma.app.create({
       data: {
         name: data.name,
-        slug: data.slug,
         type: data.type,
         icon: data.icon,
         description: data.description,
         config: data.config as any,
         order: data.order ?? 0,
-        isActive: data.isActive ?? false,
+        enabled: data.enabled ?? false,
       },
     });
 
@@ -158,18 +142,9 @@ router.post('/', adminOnly, async (req: Request, res: Response) => {
 });
 
 // GET /apps/:id - Get single app (admin)
-router.get('/:id', adminOnly, async (req: Request, res: Response) => {
+router.get('/:id', adminAuth, async (req: Request, res: Response) => {
   const app = await prisma.app.findUnique({
     where: { id: req.params.id },
-    include: {
-      listings: {
-        take: 10,
-        orderBy: { createdAt: 'desc' },
-      },
-      _count: {
-        select: { listings: true },
-      },
-    },
   });
 
   if (!app) {
@@ -180,7 +155,7 @@ router.get('/:id', adminOnly, async (req: Request, res: Response) => {
 });
 
 // PUT /apps/:id - Update app (admin)
-router.put('/:id', adminOnly, async (req: Request, res: Response) => {
+router.put('/:id', adminAuth, async (req: Request, res: Response) => {
   try {
     const data = updateAppSchema.parse(req.body);
 
@@ -190,16 +165,6 @@ router.put('/:id', adminOnly, async (req: Request, res: Response) => {
 
     if (!existing) {
       throw new AppError(404, 'App not found');
-    }
-
-    // Check slug uniqueness if changing
-    if (data.slug && data.slug !== existing.slug) {
-      const slugExists = await prisma.app.findUnique({
-        where: { slug: data.slug },
-      });
-      if (slugExists) {
-        throw new AppError(409, 'App with this slug already exists');
-      }
     }
 
     // Validate config if provided
@@ -235,18 +200,13 @@ router.put('/:id', adminOnly, async (req: Request, res: Response) => {
 });
 
 // DELETE /apps/:id - Delete app (admin)
-router.delete('/:id', adminOnly, async (req: Request, res: Response) => {
+router.delete('/:id', adminAuth, async (req: Request, res: Response) => {
   const existing = await prisma.app.findUnique({
     where: { id: req.params.id },
-    include: { _count: { select: { listings: true } } },
   });
 
   if (!existing) {
     throw new AppError(404, 'App not found');
-  }
-
-  if (existing._count.listings > 0) {
-    throw new AppError(400, 'Cannot delete app with existing listings. Deactivate it instead.');
   }
 
   await prisma.app.delete({
@@ -259,7 +219,7 @@ router.delete('/:id', adminOnly, async (req: Request, res: Response) => {
 });
 
 // POST /apps/reorder - Reorder apps (admin)
-router.post('/reorder', adminOnly, async (req: Request, res: Response) => {
+router.post('/reorder', adminAuth, async (req: Request, res: Response) => {
   const schema = z.object({
     orders: z.array(z.object({
       id: z.string(),
@@ -313,12 +273,11 @@ router.get('/mobile/config', userAuth, async (req: Request, res: Response) => {
 
   // Fetch from database
   const apps = await prisma.app.findMany({
-    where: { isActive: true },
+    where: { enabled: true },
     orderBy: { order: 'asc' },
     select: {
       id: true,
       name: true,
-      slug: true,
       type: true,
       icon: true,
       description: true,
@@ -338,9 +297,9 @@ router.get('/mobile/config', userAuth, async (req: Request, res: Response) => {
   return res.json(apps);
 });
 
-// GET /apps/mobile/:slug - Get single app config by slug for mobile
-router.get('/mobile/:slug', userAuth, async (req: Request, res: Response) => {
-  const cacheKey = `app:slug:${req.params.slug}`;
+// GET /apps/mobile/:id - Get single app config by id for mobile
+router.get('/mobile/:id', userAuth, async (req: Request, res: Response) => {
+  const cacheKey = `app:${req.params.id}`;
   
   // Check cache
   const cached = await redis.get(cacheKey);
@@ -350,13 +309,12 @@ router.get('/mobile/:slug', userAuth, async (req: Request, res: Response) => {
 
   const app = await prisma.app.findFirst({
     where: { 
-      slug: req.params.slug,
-      isActive: true,
+      id: req.params.id,
+      enabled: true,
     },
     select: {
       id: true,
       name: true,
-      slug: true,
       type: true,
       icon: true,
       description: true,

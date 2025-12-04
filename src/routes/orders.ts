@@ -1,22 +1,21 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
-import { prisma } from '../lib/prisma';
-import { adminOnly, userAuth } from '../middleware/auth';
-import { OrderService, OrderStatus } from '../services/OrderService';
-import { AppError } from '../middleware/errorHandler';
+import { OrderStatus } from '@prisma/client';
+import { prisma } from '../lib/prisma.js';
+import { adminOnly, userAuth } from '../middleware/auth.js';
+import { orderService } from '../services/OrderService.js';
+import { AppError } from '../middleware/errorHandler.js';
 
 const router = Router();
-const orderService = new OrderService();
 
 // ==================== ADMIN ROUTES ====================
 
 // GET /orders - List all orders (admin)
 router.get('/', adminOnly, async (req: Request, res: Response) => {
-  const { status, appId, page = '1', limit = '20' } = req.query;
+  const { status, page = '1', limit = '20' } = req.query;
 
   const where: any = {};
   if (status) where.status = status;
-  if (appId) where.listing = { appId };
 
   const skip = (parseInt(page as string) - 1) * parseInt(limit as string);
   const take = parseInt(limit as string);
@@ -35,7 +34,7 @@ router.get('/', adminOnly, async (req: Request, res: Response) => {
           select: { id: true, did: true, handle: true, displayName: true },
         },
         listing: {
-          select: { id: true, title: true, appId: true },
+          select: { id: true, title: true },
         },
       },
     }),
@@ -60,9 +59,7 @@ router.get('/:id', adminOnly, async (req: Request, res: Response) => {
     include: {
       buyer: true,
       seller: true,
-      listing: {
-        include: { app: true },
-      },
+      listing: true,
       transactions: {
         orderBy: { createdAt: 'desc' },
       },
@@ -76,34 +73,6 @@ router.get('/:id', adminOnly, async (req: Request, res: Response) => {
   return res.json(order);
 });
 
-// POST /orders/:id/resolve-dispute - Resolve dispute (admin)
-router.post('/:id/resolve-dispute', adminOnly, async (req: Request, res: Response) => {
-  const schema = z.object({
-    resolution: z.enum(['refund_buyer', 'release_to_seller', 'partial_refund']),
-    refundAmount: z.number().optional(),
-    notes: z.string().optional(),
-  });
-
-  try {
-    const { resolution, refundAmount, notes } = schema.parse(req.body);
-
-    const order = await orderService.resolveDispute(
-      req.params.id,
-      resolution,
-      req.adminId!,
-      refundAmount,
-      notes
-    );
-
-    return res.json(order);
-  } catch (error) {
-    if (error instanceof z.ZodError) {
-      return res.status(400).json({ error: 'Invalid input', details: error.errors });
-    }
-    throw error;
-  }
-});
-
 // ==================== USER ROUTES ====================
 
 // GET /orders/my - Get current user's orders (buyer or seller)
@@ -113,24 +82,24 @@ router.get('/my/list', userAuth, async (req: Request, res: Response) => {
   const where: any = {};
   
   if (role === 'buyer') {
-    where.buyerId = req.userId;
+    where.buyerId = req.user!.id;
   } else if (role === 'seller') {
-    where.sellerId = req.userId;
+    where.sellerId = req.user!.id;
   } else {
     // Both - orders where user is buyer or seller
     where.OR = [
-      { buyerId: req.userId },
-      { sellerId: req.userId },
+      { buyerId: req.user!.id },
+      { sellerId: req.user!.id },
     ];
   }
 
   if (status) {
     if (status === 'active') {
-      where.status = { in: ['created', 'paid', 'accepted', 'in_progress', 'delivered'] };
+      where.status = { in: [OrderStatus.created, OrderStatus.paid, OrderStatus.accepted, OrderStatus.in_progress, OrderStatus.delivered] };
     } else if (status === 'completed') {
-      where.status = 'completed';
+      where.status = OrderStatus.completed;
     } else if (status === 'disputed') {
-      where.status = { in: ['disputed', 'cancelled', 'refunded'] };
+      where.status = { in: [OrderStatus.disputed, OrderStatus.cancelled, OrderStatus.refunded] };
     } else {
       where.status = status;
     }
@@ -147,10 +116,10 @@ router.get('/my/list', userAuth, async (req: Request, res: Response) => {
       orderBy: { createdAt: 'desc' },
       include: {
         buyer: {
-          select: { id: true, did: true, handle: true, displayName: true, avatarUrl: true },
+          select: { id: true, did: true, handle: true, displayName: true, avatar: true },
         },
         seller: {
-          select: { id: true, did: true, handle: true, displayName: true, avatarUrl: true },
+          select: { id: true, did: true, handle: true, displayName: true, avatar: true },
         },
         listing: {
           select: { id: true, title: true, images: true, type: true },
@@ -177,16 +146,16 @@ router.get('/my/:id', userAuth, async (req: Request, res: Response) => {
     where: {
       id: req.params.id,
       OR: [
-        { buyerId: req.userId },
-        { sellerId: req.userId },
+        { buyerId: req.user!.id },
+        { sellerId: req.user!.id },
       ],
     },
     include: {
       buyer: {
-        select: { id: true, did: true, handle: true, displayName: true, avatarUrl: true },
+        select: { id: true, did: true, handle: true, displayName: true, avatar: true },
       },
       seller: {
-        select: { id: true, did: true, handle: true, displayName: true, avatarUrl: true },
+        select: { id: true, did: true, handle: true, displayName: true, avatar: true },
       },
       listing: {
         select: { 
@@ -240,27 +209,23 @@ router.post('/', userAuth, async (req: Request, res: Response) => {
       throw new AppError(404, 'Listing not found');
     }
 
-    if (listing.status !== 'active') {
+    if (listing.status !== 'live') {
       throw new AppError(400, 'Listing is not available');
     }
 
     // Can't buy your own listing
-    if (listing.sellerId === req.userId) {
+    if (listing.userId === req.user!.id) {
       throw new AppError(400, 'Cannot purchase your own listing');
     }
 
-    const totalAmount = listing.price * data.quantity;
+    const metadata = data.deliveryAddress ? { deliveryAddress: data.deliveryAddress, notes: data.notes } : { notes: data.notes };
 
-    const order = await orderService.createOrder({
-      buyerId: req.userId!,
-      sellerId: listing.sellerId,
-      listingId: listing.id,
-      amount: totalAmount,
-      currency: listing.currency,
-      quantity: data.quantity,
-      notes: data.notes,
-      metadata: data.deliveryAddress ? { deliveryAddress: data.deliveryAddress } : undefined,
-    });
+    const order = await orderService.create(
+      req.user!.id,
+      listing.id,
+      data.quantity,
+      metadata,
+    );
 
     return res.status(201).json(order);
   } catch (error) {
@@ -271,22 +236,16 @@ router.post('/', userAuth, async (req: Request, res: Response) => {
   }
 });
 
+// POST /orders/:id/pay - Pay for order (buyer)
+router.post('/:id/pay', userAuth, async (req: Request, res: Response) => {
+  const order = await orderService.pay(req.params.id, req.user!.id);
+  return res.json(order);
+});
+
 // POST /orders/:id/accept - Accept order (seller)
 router.post('/:id/accept', userAuth, async (req: Request, res: Response) => {
-  const order = await prisma.order.findUnique({
-    where: { id: req.params.id },
-  });
-
-  if (!order) {
-    throw new AppError(404, 'Order not found');
-  }
-
-  if (order.sellerId !== req.userId) {
-    throw new AppError(403, 'Only the seller can accept this order');
-  }
-
-  const updatedOrder = await orderService.acceptOrder(req.params.id);
-  return res.json(updatedOrder);
+  const order = await orderService.accept(req.params.id, req.user!.id);
+  return res.json(order);
 });
 
 // POST /orders/:id/reject - Reject order (seller)
@@ -297,30 +256,27 @@ router.post('/:id/reject', userAuth, async (req: Request, res: Response) => {
 
   try {
     const { reason } = schema.parse(req.body);
-
-    const order = await prisma.order.findUnique({
-      where: { id: req.params.id },
-    });
-
-    if (!order) {
-      throw new AppError(404, 'Order not found');
+    const order = await orderService.reject(req.params.id, req.user!.id, reason);
+    return res.json(order);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ error: 'Invalid input', details: error.errors });
     }
+    throw error;
+  }
+});
 
-    if (order.sellerId !== req.userId) {
-      throw new AppError(403, 'Only the seller can reject this order');
-    }
+// POST /orders/:id/ship - Mark as shipped (seller)
+router.post('/:id/ship', userAuth, async (req: Request, res: Response) => {
+  const schema = z.object({
+    trackingNumber: z.string().optional(),
+    carrier: z.string().optional(),
+  });
 
-    if (order.status !== 'paid') {
-      throw new AppError(400, 'Order cannot be rejected in current status');
-    }
-
-    const updatedOrder = await orderService.updateStatus(
-      req.params.id,
-      'cancelled',
-      { rejectionReason: reason }
-    );
-
-    return res.json(updatedOrder);
+  try {
+    const trackingInfo = schema.parse(req.body);
+    const order = await orderService.ship(req.params.id, req.user!.id, trackingInfo);
+    return res.json(order);
   } catch (error) {
     if (error instanceof z.ZodError) {
       return res.status(400).json({ error: 'Invalid input', details: error.errors });
@@ -331,46 +287,20 @@ router.post('/:id/reject', userAuth, async (req: Request, res: Response) => {
 
 // POST /orders/:id/delivered - Mark as delivered (seller)
 router.post('/:id/delivered', userAuth, async (req: Request, res: Response) => {
-  const order = await prisma.order.findUnique({
-    where: { id: req.params.id },
-  });
-
-  if (!order) {
-    throw new AppError(404, 'Order not found');
-  }
-
-  if (order.sellerId !== req.userId) {
-    throw new AppError(403, 'Only the seller can mark this order as delivered');
-  }
-
-  const updatedOrder = await orderService.markDelivered(req.params.id);
-  return res.json(updatedOrder);
+  const order = await orderService.markDelivered(req.params.id, req.user!.id);
+  return res.json(order);
 });
 
 // POST /orders/:id/confirm - Confirm delivery (buyer)
 router.post('/:id/confirm', userAuth, async (req: Request, res: Response) => {
   const schema = z.object({
     rating: z.number().int().min(1).max(5).optional(),
-    review: z.string().optional(),
   });
 
   try {
-    const { rating, review } = schema.parse(req.body);
-
-    const order = await prisma.order.findUnique({
-      where: { id: req.params.id },
-    });
-
-    if (!order) {
-      throw new AppError(404, 'Order not found');
-    }
-
-    if (order.buyerId !== req.userId) {
-      throw new AppError(403, 'Only the buyer can confirm this order');
-    }
-
-    const updatedOrder = await orderService.confirmDelivery(req.params.id, rating, review);
-    return res.json(updatedOrder);
+    const { rating } = schema.parse(req.body);
+    const order = await orderService.complete(req.params.id, req.user!.id, rating);
+    return res.json(order);
   } catch (error) {
     if (error instanceof z.ZodError) {
       return res.status(400).json({ error: 'Invalid input', details: error.errors });
@@ -379,30 +309,35 @@ router.post('/:id/confirm', userAuth, async (req: Request, res: Response) => {
   }
 });
 
-// POST /orders/:id/dispute - Open dispute (buyer)
-router.post('/:id/dispute', userAuth, async (req: Request, res: Response) => {
+// POST /orders/:id/cancel - Cancel order
+router.post('/:id/cancel', userAuth, async (req: Request, res: Response) => {
   const schema = z.object({
-    reason: z.string().min(10),
-    evidence: z.array(z.string()).optional(), // URLs to images/documents
+    reason: z.string().optional(),
   });
 
   try {
-    const { reason, evidence } = schema.parse(req.body);
-
-    const order = await prisma.order.findUnique({
-      where: { id: req.params.id },
-    });
-
-    if (!order) {
-      throw new AppError(404, 'Order not found');
+    const { reason } = schema.parse(req.body);
+    const order = await orderService.cancel(req.params.id, req.user!.id, reason);
+    return res.json(order);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ error: 'Invalid input', details: error.errors });
     }
+    throw error;
+  }
+});
 
-    if (order.buyerId !== req.userId) {
-      throw new AppError(403, 'Only the buyer can open a dispute');
-    }
+// POST /orders/:id/dispute - Open dispute (buyer or seller)
+router.post('/:id/dispute', userAuth, async (req: Request, res: Response) => {
+  const schema = z.object({
+    reason: z.string().min(10),
+    description: z.string().optional(),
+  });
 
-    const updatedOrder = await orderService.createDispute(req.params.id, reason);
-    return res.json(updatedOrder);
+  try {
+    const { reason, description } = schema.parse(req.body);
+    const order = await orderService.openDispute(req.params.id, req.user!.id, reason, description);
+    return res.json(order);
   } catch (error) {
     if (error instanceof z.ZodError) {
       return res.status(400).json({ error: 'Invalid input', details: error.errors });
@@ -430,11 +365,11 @@ router.post('/:id/update-location', userAuth, async (req: Request, res: Response
       throw new AppError(404, 'Order not found');
     }
 
-    if (order.sellerId !== req.userId) {
+    if (order.sellerId !== req.user!.id) {
       throw new AppError(403, 'Only the seller/driver can update location');
     }
 
-    if (!['accepted', 'in_progress'].includes(order.status)) {
+    if (![OrderStatus.accepted, OrderStatus.in_progress].includes(order.status)) {
       throw new AppError(400, 'Cannot update location in current status');
     }
 
@@ -442,15 +377,15 @@ router.post('/:id/update-location', userAuth, async (req: Request, res: Response
       where: { id: req.params.id },
       data: {
         metadata: {
-          ...(order.metadata as any),
-          currentLocation: { lat, lng, updatedAt: new Date() },
+          ...(order.metadata as object || {}),
+          currentLocation: { lat, lng, updatedAt: new Date().toISOString() },
           eta,
         },
       },
     });
 
     // Publish location update for real-time tracking
-    const { redis } = await import('../lib/redis');
+    const { redis } = await import('../lib/redis.js');
     await redis.publish(`order:${order.id}:location`, JSON.stringify({ lat, lng, eta }));
 
     return res.json(updatedOrder);

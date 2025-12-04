@@ -240,15 +240,16 @@ export class OrderService {
   async ship(orderId: string, sellerId: string, trackingInfo?: Record<string, unknown>) {
     const order = await this.validateStatusTransition(orderId, sellerId, 'seller', OrderStatus.shipped)
 
+    const existingMetadata = (order.metadata as object) || {}
     const updatedOrder = await prisma.order.update({
       where: { id: orderId },
       data: {
         status: OrderStatus.shipped,
         shippedAt: new Date(),
         metadata: {
-          ...(order.metadata as object || {}),
-          tracking: trackingInfo,
-        },
+          ...existingMetadata,
+          tracking: trackingInfo ? JSON.parse(JSON.stringify(trackingInfo)) : undefined,
+        } as Prisma.JsonObject,
       },
       include: {
         listing: true,
