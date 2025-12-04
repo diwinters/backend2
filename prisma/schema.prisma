@@ -25,7 +25,6 @@ model Admin {
   // Relations
   reviewedApplications SellerApplication[] @relation("ReviewedBy")
   reviewedListings     Listing[]           @relation("ReviewedBy")
-  managedCities        City[]              @relation("CityManagedBy")
 
   @@map("admins")
 }
