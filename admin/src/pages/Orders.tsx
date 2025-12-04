@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../lib/auth'
 import { useState } from 'react'
-import { Search, Filter, Eye, AlertTriangle, RefreshCw, ShoppingCart, ChevronLeft, ChevronRight, X, Clock, CheckCircle, Package, Truck, AlertCircle, DollarSign, TrendingUp } from 'lucide-react'
+import { Search, Filter, Eye, AlertTriangle, RefreshCw, ShoppingCart, ChevronLeft, ChevronRight, X, Clock, CheckCircle, Package, Truck, DollarSign } from 'lucide-react'
 
 interface Order {
   id: string

@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../lib/auth'
 import { useState } from 'react'
-import { Search, RefreshCw, Users as UsersIcon, ChevronLeft, ChevronRight, MoreVertical, Eye, Ban, Mail, UserCheck, Calendar, Wallet, ShoppingCart, X } from 'lucide-react'
+import { Search, RefreshCw, Users as UsersIcon, ChevronLeft, ChevronRight, MoreVertical, Eye, Ban, Mail, Calendar, Wallet, ShoppingCart, X } from 'lucide-react'
 
 interface User {
   id: string

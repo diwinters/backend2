@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../lib/auth'
 import { useState } from 'react'
-import { Search, Star, RefreshCw, Filter, Users, TrendingUp, Package, DollarSign, ChevronLeft, ChevronRight, MoreVertical, Ban, CheckCircle, Eye, Mail } from 'lucide-react'
+import { Search, Star, RefreshCw, Filter, Users, TrendingUp, Package, ChevronLeft, ChevronRight, MoreVertical, Ban, CheckCircle, Eye, Mail } from 'lucide-react'
 
 interface Seller {
   id: string
@@ -79,7 +79,8 @@ export default function Sellers() {
 
   // Calculate summary stats
   const totalSellers = data?.pagination.total || 0
-  const avgRating = filteredSellers?.filter(s => s.rating).reduce((acc, s) => acc + (s.rating || 0), 0) / (filteredSellers?.filter(s => s.rating).length || 1) || 0
+  const sellersWithRating = filteredSellers?.filter(s => s.rating) || []
+  const avgRating = sellersWithRating.length > 0 ? sellersWithRating.reduce((acc, s) => acc + (s.rating || 0), 0) / sellersWithRating.length : 0
   const totalListings = filteredSellers?.reduce((acc, s) => acc + s._count.listings, 0) || 0
   const totalOrders = filteredSellers?.reduce((acc, s) => acc + s._count.orders, 0) || 0
 

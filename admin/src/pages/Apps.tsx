@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { api } from '../lib/auth'
-import { Plus, MoreVertical, GripVertical, ExternalLink, Search, Grid3X3, RefreshCw, Pencil, Trash2, Eye, EyeOff, LayoutGrid, List, Filter } from 'lucide-react'
+import { Plus, MoreVertical, GripVertical, Search, Grid3X3, RefreshCw, Pencil, Trash2, Eye, EyeOff, LayoutGrid, List, Filter } from 'lucide-react'
 import { useState, useEffect, useRef } from 'react'
 
 interface App {
@@ -23,7 +23,7 @@ export default function Apps() {
   const [searchQuery, setSearchQuery] = useState('')
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('list')
   const [typeFilter, setTypeFilter] = useState<string>('all')
-  const menuRef = useRef<HTMLDivElement>(null)
+  const menuRef = useRef<HTMLElement>(null)
 
   // Close menu when clicking outside
   useEffect(() => {
@@ -294,7 +294,8 @@ export default function Apps() {
                       {app.enabled ? 'Active' : 'Inactive'}
                     </button>
                   </td>
-                  <td className="px-4 py-4 relative" ref={menuOpen === app.id ? menuRef : null}>
+                  <td className="px-4 py-4 relative">
+                    <div ref={menuOpen === app.id ? menuRef : null}>
                     <button
                       onClick={() => setMenuOpen(menuOpen === app.id ? null : app.id)}
                       className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
@@ -325,6 +326,7 @@ export default function Apps() {
                         </button>
                       </div>
                     )}
+                    </div>
                   </td>
                 </tr>
               ))}
