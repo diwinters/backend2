@@ -148,14 +148,14 @@ async function start() {
     initSocketHandlers(io)
     console.log('✅ Socket.io initialized')
 
-    // Start HTTP server
-    httpServer.listen(config.port, () => {
+    // Start HTTP server - bind to 0.0.0.0 to accept external connections
+    httpServer.listen(config.port, '0.0.0.0', () => {
       console.log(`
 🚀 Mini-App Backend running!
    
-   API:    http://localhost:${config.port}/api
-   Admin:  http://localhost:${config.port}/admin
-   Health: http://localhost:${config.port}/api/health
+   API:    http://0.0.0.0:${config.port}/api
+   Admin:  http://0.0.0.0:${config.port}/admin
+   Health: http://0.0.0.0:${config.port}/api/health
    
    Environment: ${config.nodeEnv}
       `)
