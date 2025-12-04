@@ -27,27 +27,38 @@ export default function Login() {
     setError('')
     setLoading(true)
 
+    console.log('[LOGIN] Starting login process')
+
     try {
+      console.log('[LOGIN] Calling API /auth/login')
       const res = await api<LoginResponse>('/auth/login', {
         method: 'POST',
         body: JSON.stringify({ email, password }),
       })
 
-      console.log('Login successful, token:', res.token.substring(0, 20) + '...')
-      console.log('Admin:', res.admin)
+      console.log('[LOGIN] Login API successful, token:', res.token.substring(0, 20) + '...')
+      console.log('[LOGIN] Admin:', res.admin)
       
-      setAuth(res.token, { ...res.admin, role: res.admin.role || 'admin' })
+      const adminWithRole = { ...res.admin, role: res.admin.role || 'admin' }
+      console.log('[LOGIN] Calling setAuth with token and admin')
+      setAuth(res.token, adminWithRole)
       
       // Verify auth was set
       setTimeout(() => {
         const state = useAuthStore.getState()
-        console.log('Auth state after setAuth:', {
+        console.log('[LOGIN] Auth state 100ms after setAuth:', {
           hasToken: !!state.token,
           hasAdmin: !!state.admin,
-          isAuthenticated: state.isAuthenticated()
+          isAuthenticated: state.isAuthenticated(),
+          adminEmail: state.admin?.email
         })
+        
+        // Check localStorage directly
+        const stored = localStorage.getItem('admin-auth')
+        console.log('[LOGIN] LocalStorage admin-auth:', stored ? JSON.parse(stored) : 'null')
       }, 100)
       
+      console.log('[LOGIN] Navigating to /')
       navigate('/')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Authentication failed')

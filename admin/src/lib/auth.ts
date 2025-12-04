@@ -21,12 +21,36 @@ export const useAuthStore = create<AuthState>()(
     (set, get) => ({
       token: null,
       admin: null,
-      setAuth: (token, admin) => set({ token, admin }),
-      logout: () => set({ token: null, admin: null }),
-      isAuthenticated: () => !!get().token,
+      setAuth: (token, admin) => {
+        console.log('[AUTH STORE] setAuth called with:', { 
+          tokenLength: token?.length, 
+          admin: admin?.email 
+        })
+        set({ token, admin })
+        console.log('[AUTH STORE] State after set:', { 
+          hasToken: !!get().token, 
+          hasAdmin: !!get().admin 
+        })
+      },
+      logout: () => {
+        console.log('[AUTH STORE] logout called')
+        set({ token: null, admin: null })
+      },
+      isAuthenticated: () => {
+        const result = !!get().token
+        console.log('[AUTH STORE] isAuthenticated check:', result, 'token:', get().token?.substring(0, 20))
+        return result
+      },
     }),
     {
       name: 'admin-auth',
+      onRehydrateStorage: () => (state) => {
+        console.log('[AUTH STORE] Rehydrated from localStorage:', {
+          hasToken: !!state?.token,
+          hasAdmin: !!state?.admin,
+          tokenPreview: state?.token?.substring(0, 20)
+        })
+      },
     }
   )
 )
