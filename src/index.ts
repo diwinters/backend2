@@ -115,11 +115,34 @@ app.get('/api/health', (_req, res) => {
 // ADMIN PORTAL (Static files)
 // =============================================================================
 
+import { existsSync } from 'fs'
+
 const adminPath = path.join(process.cwd(), 'admin', 'dist')
-app.use('/admin', express.static(adminPath))
-app.get('/admin/*', (_req, res) => {
-  res.sendFile(path.join(adminPath, 'index.html'))
-})
+const adminExists = existsSync(adminPath)
+
+if (adminExists) {
+  app.use('/admin', express.static(adminPath))
+  app.get('/admin/*', (_req, res) => {
+    res.sendFile(path.join(adminPath, 'index.html'))
+  })
+} else {
+  app.get('/admin*', (_req, res) => {
+    res.status(503).send(`
+      <html>
+        <head><title>Admin Not Built</title></head>
+        <body style="font-family: system-ui; padding: 40px; text-align: center;">
+          <h1>⚠️ Admin Dashboard Not Built</h1>
+          <p>The admin dashboard needs to be built first.</p>
+          <pre style="background: #f5f5f5; padding: 20px; border-radius: 8px; text-align: left; display: inline-block;">
+cd admin
+npm install
+npm run build</pre>
+          <p style="margin-top: 20px; color: #666;">Then restart the server.</p>
+        </body>
+      </html>
+    `)
+  })
+}
 
 // =============================================================================
 // ERROR HANDLING
