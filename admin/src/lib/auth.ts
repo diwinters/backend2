@@ -31,10 +31,18 @@ export const useAuthStore = create<AuthState>()(
           hasToken: !!get().token, 
           hasAdmin: !!get().admin 
         })
+        // Force save to localStorage
+        try {
+          localStorage.setItem('admin-auth', JSON.stringify({ state: { token, admin }, version: 0 }))
+          console.log('[AUTH STORE] Manually saved to localStorage')
+        } catch (e) {
+          console.error('[AUTH STORE] Failed to save to localStorage:', e)
+        }
       },
       logout: () => {
         console.log('[AUTH STORE] logout called')
         set({ token: null, admin: null })
+        localStorage.removeItem('admin-auth')
       },
       isAuthenticated: () => {
         const result = !!get().token
@@ -44,6 +52,21 @@ export const useAuthStore = create<AuthState>()(
     }),
     {
       name: 'admin-auth',
+      storage: {
+        getItem: (name) => {
+          const str = localStorage.getItem(name)
+          console.log('[STORAGE] getItem:', name, str ? 'found' : 'not found')
+          return str
+        },
+        setItem: (name, value) => {
+          console.log('[STORAGE] setItem:', name, 'value length:', value.length)
+          localStorage.setItem(name, value)
+        },
+        removeItem: (name) => {
+          console.log('[STORAGE] removeItem:', name)
+          localStorage.removeItem(name)
+        },
+      },
       onRehydrateStorage: () => (state) => {
         console.log('[AUTH STORE] Rehydrated from localStorage:', {
           hasToken: !!state?.token,
