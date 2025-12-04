@@ -33,7 +33,21 @@ export default function Login() {
         body: JSON.stringify({ email, password }),
       })
 
+      console.log('Login successful, token:', res.token.substring(0, 20) + '...')
+      console.log('Admin:', res.admin)
+      
       setAuth(res.token, { ...res.admin, role: res.admin.role || 'admin' })
+      
+      // Verify auth was set
+      setTimeout(() => {
+        const state = useAuthStore.getState()
+        console.log('Auth state after setAuth:', {
+          hasToken: !!state.token,
+          hasAdmin: !!state.admin,
+          isAuthenticated: state.isAuthenticated()
+        })
+      }, 100)
+      
       navigate('/')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Authentication failed')

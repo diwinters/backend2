@@ -14,8 +14,13 @@ import Transactions from './pages/Transactions'
 
 function PrivateRoute() {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated())
+  const token = useAuthStore((s) => s.token)
+  const admin = useAuthStore((s) => s.admin)
+  
+  console.log('PrivateRoute check:', { isAuthenticated, hasToken: !!token, hasAdmin: !!admin })
   
   if (!isAuthenticated) {
+    console.log('Not authenticated, redirecting to login')
     return <Navigate to="/login" replace />
   }
   
