@@ -108,7 +108,7 @@ router.post('/:id/approve', adminAuth, async (req: Request, res: Response) => {
   });
 
   // Notify seller
-  const { NotificationService } = await import('../services/NotificationService');
+  const { NotificationService } = await import('../services/NotificationService.js');
   const notificationService = new NotificationService();
   await notificationService.create(
     listing.userId,
@@ -153,7 +153,7 @@ router.post('/:id/reject', adminAuth, async (req: Request, res: Response) => {
     });
 
     // Notify seller
-    const { NotificationService } = await import('../services/NotificationService');
+    const { NotificationService } = await import('../services/NotificationService.js');
     const notificationService = new NotificationService();
     await notificationService.create(
       listing.userId,

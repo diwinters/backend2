@@ -174,10 +174,10 @@ export function initSocketHandlers(io: SocketServer) {
   // ==================== REDIS PUB/SUB INTEGRATION ====================
   
   // Listen for notifications from Redis pub/sub
-  redisSub.subscribe('notifications', (err: Error | null, count?: number) => {
-    if (err) {
-      console.error('Failed to subscribe to notifications channel:', err);
-    }
+  redisSub.subscribe('notifications').then(() => {
+    console.log('Subscribed to notifications channel');
+  }).catch((err: Error) => {
+    console.error('Failed to subscribe to notifications channel:', err);
   });
 
   redisSub.on('message', (channel: string, message: string) => {
@@ -199,10 +199,10 @@ export function initSocketHandlers(io: SocketServer) {
   });
 
   // Subscribe to order location updates
-  redisSub.psubscribe('order:*:location', (err: Error | null, count?: number) => {
-    if (err) {
-      console.error('Failed to subscribe to order locations:', err);
-    }
+  redisSub.psubscribe('order:*:location').then(() => {
+    console.log('Subscribed to order location updates');
+  }).catch((err: Error) => {
+    console.error('Failed to subscribe to order locations:', err);
   });
 
   redisSub.on('pmessage', (pattern: string, channel: string, message: string) => {
