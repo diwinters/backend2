@@ -53,12 +53,12 @@ export const useAuthStore = create<AuthState>()(
     {
       name: 'admin-auth',
       storage: {
-        getItem: (name) => {
+        getItem: (name): string | null => {
           const str = localStorage.getItem(name)
           console.log('[STORAGE] getItem:', name, str ? 'found' : 'not found')
           return str
         },
-        setItem: (name, value) => {
+        setItem: (name, value: string) => {
           console.log('[STORAGE] setItem:', name, 'value length:', value.length)
           localStorage.setItem(name, value)
         },
