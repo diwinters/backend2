@@ -1,4 +1,4 @@
-import { Routes, Route, Navigate } from 'react-router-dom'
+import { Routes, Route, Navigate, Outlet } from 'react-router-dom'
 import { useAuthStore } from './lib/auth'
 import Layout from './components/Layout'
 import Login from './pages/Login'
@@ -12,36 +12,36 @@ import Orders from './pages/Orders'
 import Users from './pages/Users'
 import Transactions from './pages/Transactions'
 
-function PrivateRoute({ children }: { children: React.ReactNode }) {
+function PrivateRoute() {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated())
-  return isAuthenticated ? <>{children}</> : <Navigate to="/admin/login" replace />
+  
+  if (!isAuthenticated) {
+    return <Navigate to="/login" replace />
+  }
+  
+  return (
+    <Layout>
+      <Outlet />
+    </Layout>
+  )
 }
 
 export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
-      <Route
-        path="/*"
-        element={
-          <PrivateRoute>
-            <Layout>
-              <Routes>
-                <Route path="/" element={<Dashboard />} />
-                <Route path="/apps" element={<Apps />} />
-                <Route path="/apps/new" element={<AppEditor />} />
-                <Route path="/apps/:id" element={<AppEditor />} />
-                <Route path="/users" element={<Users />} />
-                <Route path="/sellers" element={<Sellers />} />
-                <Route path="/sellers/applications" element={<SellerApplications />} />
-                <Route path="/listings" element={<Listings />} />
-                <Route path="/orders" element={<Orders />} />
-                <Route path="/transactions" element={<Transactions />} />
-              </Routes>
-            </Layout>
-          </PrivateRoute>
-        }
-      />
+      <Route element={<PrivateRoute />}>
+        <Route path="/" element={<Dashboard />} />
+        <Route path="/apps" element={<Apps />} />
+        <Route path="/apps/new" element={<AppEditor />} />
+        <Route path="/apps/:id" element={<AppEditor />} />
+        <Route path="/users" element={<Users />} />
+        <Route path="/sellers" element={<Sellers />} />
+        <Route path="/sellers/applications" element={<SellerApplications />} />
+        <Route path="/listings" element={<Listings />} />
+        <Route path="/orders" element={<Orders />} />
+        <Route path="/transactions" element={<Transactions />} />
+      </Route>
     </Routes>
   )
 }

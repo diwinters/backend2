@@ -34,7 +34,7 @@ export default function Login() {
       })
 
       setAuth(res.token, { ...res.admin, role: res.admin.role || 'admin' })
-      navigate('/admin/')
+      navigate('/')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Authentication failed')
     } finally {
